@@ -555,7 +555,8 @@ function updateImpacts(dt) {
   if (flashTimer > 0) {
     flashTimer -= dt;
     flashMesh.material.opacity = flashTimer / 0.08;
-    if (flashTimer <= 0) flashMesh.material.opacity = 0;
+    flashMesh.material.emissiveIntensity = (flashTimer / 0.08) * 3.0;
+    if (flashTimer <= 0) { flashMesh.material.opacity = 0; flashMesh.material.emissiveIntensity = 0; }
   }
 }
 
