@@ -609,6 +609,12 @@ function giveWeapon(key) {
     // Brand new weapon — always switch to it so the player knows they got it
     player.inventory[key] = { ...WEAPONS[key] };
     player.weapon = key;
+    if (isZoomed) {
+      isZoomed = false;
+      camera.fov = 75;
+      camera.updateProjectionMatrix();
+      document.getElementById('scopeBars').style.display = 'none';
+    }
   }
   updateGunVisual();
 }
@@ -820,6 +826,7 @@ const flashMesh = new THREE.Mesh(new THREE.SphereGeometry(0.18, 6, 6), flashMat)
 flashMesh.position.set(0, 0, -0.65);
 gunGroup.add(flashMesh);
 let flashTimer = 0;
+let isZoomed = false;
 
 // ════════════════════════════════════════════════════════════════
 //  INPUT
@@ -865,6 +872,31 @@ document.addEventListener('mousedown', e => {
     shoot();
   }
 });
+
+// Sniper zoom (RMB)
+document.addEventListener('mousedown', e => {
+  if (e.button === 2 && state.phase === 'playing' &&
+      document.pointerLockElement === canvas &&
+      player.weapon === 'sniper') {
+    isZoomed = true;
+    camera.fov = 22;
+    camera.updateProjectionMatrix();
+    document.getElementById('scopeBars').style.display = 'block';
+    document.getElementById('crosshair').style.display = 'none';
+  }
+});
+document.addEventListener('mouseup', e => {
+  if (e.button === 2) {
+    isZoomed = false;
+    camera.fov = 75;
+    camera.updateProjectionMatrix();
+    document.getElementById('scopeBars').style.display = 'none';
+    if (document.pointerLockElement === canvas) {
+      document.getElementById('crosshair').style.display = 'block';
+    }
+  }
+});
+document.addEventListener('contextmenu', e => e.preventDefault());
 
 function startGame(endless) {
   state.endless = endless;
@@ -1248,6 +1280,9 @@ function killBot(bot) {
 function damagePlayer(dmg) {
   player.hp -= dmg;
   player.hitTime = 0.3;
+  const df = document.getElementById('dmgFlash');
+  df.classList.add('hit');
+  setTimeout(() => df.classList.remove('hit'), 80);
   if (player.hp <= 0) killPlayer();
 }
 
