@@ -624,9 +624,9 @@ function updateGunVisual() {
 //  SHOOTING & IMPACTS
 // ════════════════════════════════════════════════════════════════
 const impactParticles = [];
-const impactGeo = new THREE.SphereGeometry(0.05, 4, 4);
-const impactMat = new THREE.MeshBasicMaterial({ color: 0xffcc44 });
-for (let i = 0; i < 20; i++) {
+const impactGeo = new THREE.SphereGeometry(0.08, 4, 4);
+const impactMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffaa00, emissiveIntensity: 2.0, transparent: true });
+for (let i = 0; i < 40; i++) {
   const m = new THREE.Mesh(impactGeo, impactMat.clone());
   m.visible = false;
   scene.add(m);
@@ -635,11 +635,13 @@ for (let i = 0; i < 20; i++) {
 let impactIdx = 0;
 
 function spawnImpact(pos) {
-  const p = impactParticles[impactIdx++ % impactParticles.length];
-  p.mesh.position.copy(pos);
-  p.mesh.visible = true;
-  p.life = 0.4;
-  p.vel.set((Math.random()-0.5)*4, Math.random()*4, (Math.random()-0.5)*4);
+  for (let s = 0; s < 6; s++) {
+    const p = impactParticles[impactIdx++ % impactParticles.length];
+    p.mesh.position.copy(pos);
+    p.mesh.visible = true;
+    p.life = 0.3 + Math.random() * 0.25;
+    p.vel.set((Math.random()-0.5)*6, Math.random()*5 + 1, (Math.random()-0.5)*6);
+  }
 }
 
 function shoot() {
@@ -687,7 +689,9 @@ function updateImpacts(dt) {
     p.life -= dt;
     p.mesh.position.addScaledVector(p.vel, dt);
     p.vel.y += GRAVITY * dt;
-    p.mesh.material.opacity = p.life / 0.4;
+    const t = p.life / 0.55;
+    p.mesh.material.opacity = t;
+    p.mesh.material.emissiveIntensity = t * 2.0;
     if (p.life <= 0) p.mesh.visible = false;
   }
   // Muzzle flash fade
@@ -784,6 +788,12 @@ const stormWallMat = new THREE.MeshStandardMaterial({
 const stormWall = new THREE.Mesh(stormWallGeo, stormWallMat);
 stormWall.position.y = 5;
 scene.add(stormWall);
+
+// Storm lightning
+const lightningLight = new THREE.PointLight(0xccccff, 0, 250);
+lightningLight.position.set(0, 40, 0);
+scene.add(lightningLight);
+let lightningTimer = 0;
 
 // ════════════════════════════════════════════════════════════════
 //  GUN MESH (attached to camera)
@@ -1014,6 +1024,7 @@ function loop(t) {
     updateImpacts(dt);
     updateClouds(dt);
     updateDust(dt);
+    updateLightning(dt);
   }
   composer.render();
 }
@@ -1318,10 +1329,31 @@ function bindMainMenuButtons() {
   document.getElementById('btnEndless')?.addEventListener('click', () => startGame(true));
 }
 
+function triggerLightning() {
+  const angle = Math.random() * Math.PI * 2;
+  const r = storm.radius * 0.85;
+  lightningLight.position.set(
+    storm.cx + Math.cos(angle) * r,
+    30 + Math.random() * 30,
+    storm.cz + Math.sin(angle) * r
+  );
+  lightningLight.intensity = 6 + Math.random() * 4;
+  lightningTimer = 0.25;
+}
+
+function updateLightning(dt) {
+  if (lightningTimer > 0) {
+    lightningTimer -= dt;
+    lightningLight.intensity = Math.max(0, lightningLight.intensity - dt * 30);
+    if (lightningTimer <= 0) lightningLight.intensity = 0;
+  }
+}
+
 function updateStorm(dt) {
   storm.shrinkTimer -= dt;
   if (storm.shrinkTimer <= 0 && storm.shrinkCount < STORM_SHRINKS) {
     storm.shrinkCount++;
+    triggerLightning();
     storm.shrinkTimer = STORM_INTERVAL;
     const t = storm.shrinkCount / STORM_SHRINKS;
     storm.targetRadius = MAP_SIZE * 0.48 * (1 - t * 0.85);
