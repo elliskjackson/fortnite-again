@@ -337,17 +337,6 @@ for (let i = 0; i < pos.count; i++) {
   }
 }
 terrainGeo.computeVertexNormals();
-// Vertex colors for grass variation
-terrainMat.vertexColors = true;
-const terrainColors = [];
-for (let i = 0; i < pos.count; i++) {
-  const h = pos.getZ(i);
-  const r = Math.max(0, Math.min(1, 0.25 + h * 0.01));
-  const g = Math.max(0, Math.min(1, 0.48 + h * 0.02));
-  const b = 0.18;
-  terrainColors.push(r, g, b);
-}
-terrainGeo.setAttribute('color', new THREE.Float32BufferAttribute(terrainColors, 3));
 scene.add(terrainMesh);
 
 // ════════════════════════════════════════════════════════════════
@@ -419,7 +408,7 @@ function addTree(x, z, seed) {
 function addRock(x, z, seed) {
   const s = 0.5 + seededRand(seed) * 2;
   const geo = new THREE.IcosahedronGeometry(s, 0);
-  const mat = new THREE.MeshLambertMaterial({ color: 0x888888 });
+  const mat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.85, metalness: 0.1 });
   const mesh = new THREE.Mesh(geo, mat);
   const y = placeOnTerrain(x, z);
   mesh.position.set(x, y + s * 0.6, z);
@@ -473,7 +462,7 @@ const chests = [];
 (function spawnChests() {
   const rng = (i) => seededRand(i * 73.1 + 99);
   const goldMat  = new THREE.MeshStandardMaterial({ color: 0xf0c040, emissive: 0xf0c040, emissiveIntensity: 0.6, roughness: 0.4, metalness: 0.8 });
-  const darkMat  = new THREE.MeshLambertMaterial({ color: 0x8B6914 });
+  const darkMat  = new THREE.MeshStandardMaterial({ color: 0x8B6914, roughness: 0.7, metalness: 0.3 });
 
   for (let i = 0; i < CHEST_COUNT; i++) {
     const angle = rng(i*3)   * Math.PI * 2;
@@ -496,7 +485,7 @@ const chests = [];
     group.add(lid);
     // Lock
     const lockGeo = new THREE.BoxGeometry(0.15, 0.15, 0.05);
-    const lockMat = new THREE.MeshLambertMaterial({ color: 0xffd700 });
+    const lockMat = new THREE.MeshStandardMaterial({ color: 0xffd700, roughness: 0.3, metalness: 0.9 });
     const lock    = new THREE.Mesh(lockGeo, lockMat);
     lock.position.set(0, 0.1, 0.38);
     group.add(lock);
