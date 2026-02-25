@@ -237,10 +237,88 @@ const ambient = new THREE.HemisphereLight(0x87CEEB, 0x5c7a3a, 0.6);
 scene.add(ambient);
 
 // ════════════════════════════════════════════════════════════════
+//  PROCEDURAL TEXTURES
+// ════════════════════════════════════════════════════════════════
+function makeCanvasTexture(size, drawFn) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  drawFn(c.getContext('2d'), size);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+const grassTex = makeCanvasTexture(512, (ctx, s) => {
+  // Base green
+  ctx.fillStyle = '#4a7c3f';
+  ctx.fillRect(0, 0, s, s);
+  // Noise blotches
+  for (let i = 0; i < 600; i++) {
+    const x = Math.random() * s, y = Math.random() * s;
+    const r = 4 + Math.random() * 18;
+    const lightness = 30 + Math.random() * 20;
+    ctx.fillStyle = `hsl(110,${28 + Math.random()*14}%,${lightness}%)`;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+  }
+  // Fine blade lines
+  ctx.strokeStyle = 'rgba(0,80,0,0.18)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 300; i++) {
+    const x = Math.random() * s, y = Math.random() * s;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + (Math.random()-0.5)*8, y - 6 - Math.random()*10); ctx.stroke();
+  }
+});
+grassTex.repeat.set(40, 40);
+
+const concreteTex = makeCanvasTexture(512, (ctx, s) => {
+  ctx.fillStyle = '#888';
+  ctx.fillRect(0, 0, s, s);
+  // Panel grid
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+  ctx.lineWidth = 2;
+  for (let x = 0; x < s; x += 64) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,s); ctx.stroke(); }
+  for (let y = 0; y < s; y += 64) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(s,y); ctx.stroke(); }
+  // Subtle noise
+  for (let i = 0; i < 2000; i++) {
+    const x = Math.random()*s, y = Math.random()*s;
+    const v = Math.floor(120 + Math.random()*40);
+    ctx.fillStyle = `rgba(${v},${v},${v},0.08)`;
+    ctx.fillRect(x, y, 3, 3);
+  }
+});
+concreteTex.repeat.set(3, 3);
+
+const barkTex = makeCanvasTexture(256, (ctx, s) => {
+  ctx.fillStyle = '#6B3A2A';
+  ctx.fillRect(0, 0, s, s);
+  // Vertical streaks
+  for (let i = 0; i < 60; i++) {
+    const x = Math.random() * s;
+    const w = 1 + Math.random() * 4;
+    const dark = Math.random() > 0.5;
+    ctx.fillStyle = dark ? 'rgba(0,0,0,0.2)' : 'rgba(255,200,150,0.12)';
+    ctx.fillRect(x, 0, w, s);
+  }
+});
+barkTex.repeat.set(1, 2);
+
+const leavesTex = makeCanvasTexture(256, (ctx, s) => {
+  ctx.fillStyle = '#2d6e2d';
+  ctx.fillRect(0, 0, s, s);
+  for (let i = 0; i < 200; i++) {
+    const x = Math.random()*s, y = Math.random()*s;
+    const r = 6 + Math.random()*14;
+    ctx.fillStyle = `hsl(120,${35+Math.random()*20}%,${22+Math.random()*15}%)`;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+  }
+});
+leavesTex.repeat.set(2, 2);
+
+// ════════════════════════════════════════════════════════════════
 //  TERRAIN
 // ════════════════════════════════════════════════════════════════
 const terrainGeo  = new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 80, 80);
-const terrainMat  = new THREE.MeshLambertMaterial({ color: 0x4a7c3f });
+const terrainMat  = new THREE.MeshStandardMaterial({ color: 0x7aaf6a, map: grassTex, roughness: 0.92, metalness: 0.0 });
 const terrainMesh = new THREE.Mesh(terrainGeo, terrainMat);
 terrainMesh.rotation.x = -Math.PI / 2;
 terrainMesh.receiveShadow = true;
@@ -294,8 +372,11 @@ function addBuilding(x, z, seed) {
   const h = 4 + seededRand(seed+1) * 12;
   const d = 6 + seededRand(seed+2) * 10;
   const geo = new THREE.BoxGeometry(w, h, d);
-  const mat = new THREE.MeshLambertMaterial({
-    color: new THREE.Color().setHSL(0.08 + seededRand(seed+3)*0.05, 0.15, 0.45 + seededRand(seed+4)*0.2)
+  const mat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color().setHSL(0.08 + seededRand(seed+3)*0.05, 0.12, 0.48 + seededRand(seed+4)*0.15),
+    map: concreteTex,
+    roughness: 0.85,
+    metalness: 0.05
   });
   const mesh = new THREE.Mesh(geo, mat);
   const y = placeOnTerrain(x, z);
@@ -307,7 +388,7 @@ function addBuilding(x, z, seed) {
 
   // Roof detail
   const roofGeo = new THREE.BoxGeometry(w + 0.5, 0.4, d + 0.5);
-  const roofMat = new THREE.MeshLambertMaterial({ color: 0x555555 });
+  const roofMat = new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.9, metalness: 0.1 });
   const roof = new THREE.Mesh(roofGeo, roofMat);
   roof.position.set(x, y + h + 0.2, z);
   roof.castShadow = true;
@@ -319,14 +400,14 @@ function addTree(x, z, seed) {
   const y = placeOnTerrain(x, z);
 
   const trunkGeo = new THREE.CylinderGeometry(0.2, 0.35, h, 7);
-  const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6B3A2A });
+  const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6B3A2A, map: barkTex, roughness: 0.95, metalness: 0.0 });
   const trunk = new THREE.Mesh(trunkGeo, trunkMat);
   trunk.position.set(x, y + h/2, z);
   trunk.castShadow = true;
   scene.add(trunk);
 
   const leavesGeo = new THREE.ConeGeometry(1.8 + seededRand(seed+1)*1.2, h*1.2, 8);
-  const leavesMat = new THREE.MeshLambertMaterial({ color: 0x2d6e2d });
+  const leavesMat = new THREE.MeshStandardMaterial({ color: 0x3a8a3a, map: leavesTex, roughness: 0.88, metalness: 0.0 });
   const leaves = new THREE.Mesh(leavesGeo, leavesMat);
   leaves.position.set(x, y + h + h*0.4, z);
   leaves.castShadow = true;
