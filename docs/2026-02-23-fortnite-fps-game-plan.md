@@ -1,0 +1,1707 @@
+# Fortnite-Style FPS Battle Royale — Implementation Plan
+
+> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+
+**Goal:** Build a browser-based first-person shooter battle royale game with 100 campaign levels against bots, realistic Three.js 3D graphics, weapons found in chests, and an endless mode after completing all levels.
+
+**Architecture:** Single `index.html` file with Three.js loaded via CDN. All game logic lives in one `<script>` tag, organized into clearly commented sections. Each task adds a vertical slice of functionality that can be verified by opening the file in a browser.
+
+**Tech Stack:** HTML5, Three.js r128 (CDN), Pointer Lock API, localStorage for save data, 2D Canvas overlay for HUD.
+
+---
+
+## Task 1: Project Scaffold & Three.js Scene
+
+**Files:**
+- Create: `~/Desktop/fortnite-game/index.html`
+
+**Step 1: Create the project directory**
+
+```bash
+mkdir -p ~/Desktop/fortnite-game
+```
+
+**Step 2: Create the base HTML file with Three.js scene**
+
+Create `~/Desktop/fortnite-game/index.html` with the following content:
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Battle Royale FPS</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; }
+    #c { display: block; }
+    #hud {
+      position: fixed; top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+    }
+    #overlay {
+      position: fixed; top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: rgba(0,0,0,0.85);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      color: #fff; font-family: 'Segoe UI', sans-serif;
+      z-index: 10;
+    }
+    #overlay h1 { font-size: 3em; margin-bottom: 0.3em; color: #f0c040; }
+    #overlay p  { font-size: 1.1em; color: #ccc; margin-bottom: 1.5em; }
+    .btn {
+      padding: 0.7em 2.5em; font-size: 1.1em;
+      background: #f0c040; color: #111; border: none;
+      border-radius: 6px; cursor: pointer; margin: 0.4em;
+      font-weight: bold; pointer-events: all;
+    }
+    .btn:hover { background: #ffd060; }
+    #crosshair {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 20px; height: 20px;
+      pointer-events: none;
+      display: none;
+    }
+    #crosshair::before, #crosshair::after {
+      content: '';
+      position: absolute;
+      background: rgba(255,255,255,0.85);
+    }
+    #crosshair::before { width: 2px; height: 100%; left: 50%; transform: translateX(-50%); }
+    #crosshair::after  { height: 2px; width: 100%; top: 50%; transform: translateY(-50%); }
+  </style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<canvas id="hud"></canvas>
+<div id="crosshair"></div>
+
+<!-- MAIN MENU OVERLAY -->
+<div id="overlay">
+  <h1>BATTLE ROYALE</h1>
+  <p>100 Levels · Realistic FPS · Last One Standing</p>
+  <button class="btn" id="btnPlay">PLAY LEVEL 1</button>
+  <button class="btn" id="btnEndless" style="display:none">ENDLESS MODE</button>
+  <p id="saveInfo" style="font-size:0.85em;color:#888;margin-top:1em;"></p>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+'use strict';
+
+// ════════════════════════════════════════════════════════════════
+//  CONSTANTS & CONFIG
+// ════════════════════════════════════════════════════════════════
+const MAP_SIZE       = 500;
+const NUM_BOTS       = 99;
+const CHEST_COUNT    = 30;
+const PLAYER_HEIGHT  = 1.7;
+const PLAYER_SPEED   = 8;
+const JUMP_FORCE     = 10;
+const GRAVITY        = -25;
+const STORM_DAMAGE   = 5;       // HP per second outside storm
+const STORM_INTERVAL = 90;      // seconds between storm shrinks
+const STORM_SHRINKS  = 8;       // number of times storm shrinks
+const BOT_DETECT_R   = 150;     // full AI within this radius
+const BOT_GHOST_R    = 300;     // ghost mode up to this radius
+
+const WEAPONS = {
+  pistol:   { name:'Pistol',        damage:25, fireRate:0.6,  range:200, ammo:12, maxAmmo:12,  spread:0.02, zoom:false },
+  rifle:    { name:'Assault Rifle', damage:20, fireRate:0.12, range:300, ammo:30, maxAmmo:30,  spread:0.03, zoom:false },
+  shotgun:  { name:'Shotgun',       damage:80, fireRate:0.9,  range:30,  ammo:8,  maxAmmo:8,   spread:0.12, zoom:false, pellets:8 },
+  sniper:   { name:'Sniper Rifle',  damage:95, fireRate:1.5,  range:500, ammo:5,  maxAmmo:5,   spread:0.005,zoom:true  },
+  smg:      { name:'SMG',           damage:12, fireRate:0.08, range:120, ammo:45, maxAmmo:45,  spread:0.06, zoom:false },
+};
+
+const WEAPON_COLORS = {
+  pistol:'#aaa', rifle:'#555', shotgun:'#8B4513', sniper:'#333', smg:'#888'
+};
+
+// ════════════════════════════════════════════════════════════════
+//  THREE.JS SETUP
+// ════════════════════════════════════════════════════════════════
+const canvas  = document.getElementById('c');
+const hud     = document.getElementById('hud');
+const hctx    = hud.getContext('2d');
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+renderer.outputEncoding = THREE.sRGBEncoding;
+
+const scene  = new THREE.Scene();
+scene.background = new THREE.Color(0x87CEEB);
+scene.fog = new THREE.Fog(0x87CEEB, 80, 350);
+
+const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 600);
+camera.position.set(0, PLAYER_HEIGHT, 0);
+
+function resize() {
+  const W = window.innerWidth, H = window.innerHeight;
+  renderer.setSize(W, H);
+  hud.width  = W;
+  hud.height = H;
+  camera.aspect = W / H;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ════════════════════════════════════════════════════════════════
+//  LIGHTING
+// ════════════════════════════════════════════════════════════════
+const sun = new THREE.DirectionalLight(0xfff8e7, 1.4);
+sun.position.set(100, 200, 80);
+sun.castShadow = true;
+sun.shadow.mapSize.width  = 2048;
+sun.shadow.mapSize.height = 2048;
+sun.shadow.camera.near = 0.5;
+sun.shadow.camera.far  = 600;
+sun.shadow.camera.left = sun.shadow.camera.bottom = -300;
+sun.shadow.camera.right = sun.shadow.camera.top = 300;
+sun.shadow.bias = -0.001;
+scene.add(sun);
+
+const ambient = new THREE.HemisphereLight(0x87CEEB, 0x5c7a3a, 0.6);
+scene.add(ambient);
+
+// ════════════════════════════════════════════════════════════════
+//  GAME STATE
+// ════════════════════════════════════════════════════════════════
+const state = {
+  phase: 'menu',       // 'menu' | 'playing' | 'dead' | 'win'
+  level: 1,
+  endless: false,
+  endlessLevel: 0,
+  kills: 0,
+  botsAlive: 0,
+};
+
+// Save / load
+function loadSave() {
+  const s = JSON.parse(localStorage.getItem('brSave') || '{}');
+  state.level       = Math.max(1, s.level || 1);
+  state.endlessLevel= s.endlessLevel || 0;
+  const unlocked    = s.endlessUnlocked || false;
+  document.getElementById('saveInfo').textContent =
+    `Level reached: ${state.level}/100` + (unlocked ? ' · Endless unlocked' : '');
+  if (unlocked) document.getElementById('btnEndless').style.display = '';
+}
+function saveGame() {
+  const prev = JSON.parse(localStorage.getItem('brSave') || '{}');
+  localStorage.setItem('brSave', JSON.stringify({
+    level: Math.max(state.level, prev.level || 1),
+    endlessLevel: state.endlessLevel,
+    endlessUnlocked: state.level > 100 || prev.endlessUnlocked,
+  }));
+}
+
+loadSave();
+
+// ════════════════════════════════════════════════════════════════
+//  RENDER LOOP (placeholder — populated after map/bots added)
+// ════════════════════════════════════════════════════════════════
+let lastTime = 0;
+function loop(t) {
+  requestAnimationFrame(loop);
+  const dt = Math.min((t - lastTime) / 1000, 0.05);
+  lastTime = t;
+  if (state.phase === 'playing') {
+    updatePlayer(dt);
+    updateBots(dt);
+    updateStorm(dt);
+    updateHUD();
+  }
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(loop);
+
+// ════════════════════════════════════════════════════════════════
+//  PLACEHOLDER FUNCTIONS (filled in subsequent tasks)
+// ════════════════════════════════════════════════════════════════
+function updatePlayer(dt) {}
+function updateBots(dt) {}
+function updateStorm(dt) {}
+function updateHUD() {}
+</script>
+</body>
+</html>
+```
+
+**Step 3: Verify in browser**
+
+Open `~/Desktop/fortnite-game/index.html` in Chrome or Firefox.
+
+Expected:
+- Blue sky color fills the window
+- Main menu overlay shows "BATTLE ROYALE" title
+- "PLAY LEVEL 1" button is visible
+- No console errors (F12 → Console)
+
+---
+
+## Task 2: Terrain & Environment
+
+**Files:**
+- Modify: `~/Desktop/fortnite-game/index.html` — add terrain, buildings, trees, rocks after the lighting section
+
+**Step 1: Add terrain generation code**
+
+After the lighting section (after `scene.add(ambient);`), add:
+
+```javascript
+// ════════════════════════════════════════════════════════════════
+//  TERRAIN
+// ════════════════════════════════════════════════════════════════
+const terrainGeo  = new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 80, 80);
+const terrainMat  = new THREE.MeshLambertMaterial({ color: 0x4a7c3f });
+const terrainMesh = new THREE.Mesh(terrainGeo, terrainMat);
+terrainMesh.rotation.x = -Math.PI / 2;
+terrainMesh.receiveShadow = true;
+
+// Displace vertices for rolling hills (keep center flat for gameplay)
+const pos = terrainGeo.attributes.position;
+for (let i = 0; i < pos.count; i++) {
+  const x = pos.getX(i), z = pos.getY(i);  // note: pre-rotation axes
+  const dist = Math.sqrt(x*x + z*z);
+  const flatZone = 60;
+  if (dist > flatZone) {
+    const t = (dist - flatZone) / (MAP_SIZE * 0.4);
+    const h = Math.sin(x * 0.04) * 3 + Math.cos(z * 0.05) * 2.5
+            + Math.sin(x * 0.01 + z * 0.012) * 6;
+    pos.setZ(i, h * Math.min(t, 1));
+  }
+}
+terrainGeo.computeVertexNormals();
+scene.add(terrainMesh);
+```
+
+**Step 2: Add environment object helpers**
+
+After the terrain code:
+
+```javascript
+// ════════════════════════════════════════════════════════════════
+//  ENVIRONMENT OBJECTS
+// ════════════════════════════════════════════════════════════════
+const envObjects = [];   // used for collision
+
+function seededRand(seed) {
+  let x = Math.sin(seed + 1) * 10000;
+  return x - Math.floor(x);
+}
+
+function placeOnTerrain(x, z) {
+  // Get Y on terrain via raycasting down from above
+  const ray = new THREE.Raycaster(new THREE.Vector3(x, 50, z), new THREE.Vector3(0,-1,0));
+  const hits = ray.intersectObject(terrainMesh);
+  return hits.length ? hits[0].point.y : 0;
+}
+
+function addBuilding(x, z, seed) {
+  const w = 6 + seededRand(seed)   * 10;
+  const h = 4 + seededRand(seed+1) * 12;
+  const d = 6 + seededRand(seed+2) * 10;
+  const geo = new THREE.BoxGeometry(w, h, d);
+  const mat = new THREE.MeshLambertMaterial({
+    color: new THREE.Color().setHSL(0.08 + seededRand(seed+3)*0.05, 0.15, 0.45 + seededRand(seed+4)*0.2)
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  const y = placeOnTerrain(x, z);
+  mesh.position.set(x, y + h/2, z);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+  envObjects.push({ x, z, w: w/2 + 0.5, d: d/2 + 0.5 });
+
+  // Roof detail
+  const roofGeo = new THREE.BoxGeometry(w + 0.5, 0.4, d + 0.5);
+  const roofMat = new THREE.MeshLambertMaterial({ color: 0x555555 });
+  const roof = new THREE.Mesh(roofGeo, roofMat);
+  roof.position.set(x, y + h + 0.2, z);
+  roof.castShadow = true;
+  scene.add(roof);
+}
+
+function addTree(x, z, seed) {
+  const h = 3 + seededRand(seed) * 5;
+  const y = placeOnTerrain(x, z);
+
+  const trunkGeo = new THREE.CylinderGeometry(0.2, 0.35, h, 7);
+  const trunkMat = new THREE.MeshLambertMaterial({ color: 0x6B3A2A });
+  const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+  trunk.position.set(x, y + h/2, z);
+  trunk.castShadow = true;
+  scene.add(trunk);
+
+  const leavesGeo = new THREE.ConeGeometry(1.8 + seededRand(seed+1)*1.2, h*1.2, 8);
+  const leavesMat = new THREE.MeshLambertMaterial({ color: 0x2d6e2d });
+  const leaves = new THREE.Mesh(leavesGeo, leavesMat);
+  leaves.position.set(x, y + h + h*0.4, z);
+  leaves.castShadow = true;
+  scene.add(leaves);
+
+  envObjects.push({ x, z, w: 0.5, d: 0.5 });
+}
+
+function addRock(x, z, seed) {
+  const s = 0.5 + seededRand(seed) * 2;
+  const geo = new THREE.IcosahedronGeometry(s, 0);
+  const mat = new THREE.MeshLambertMaterial({ color: 0x888888 });
+  const mesh = new THREE.Mesh(geo, mat);
+  const y = placeOnTerrain(x, z);
+  mesh.position.set(x, y + s * 0.6, z);
+  mesh.rotation.set(seededRand(seed+1)*2, seededRand(seed+2)*6, seededRand(seed+3)*2);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+  envObjects.push({ x, z, w: s + 0.3, d: s + 0.3 });
+}
+
+// Procedurally place environment
+(function generateEnvironment() {
+  const rng = (i) => seededRand(i * 137.508 + 42);
+  let seed = 0;
+
+  // Buildings: clusters
+  for (let i = 0; i < 20; i++) {
+    const angle = rng(seed++) * Math.PI * 2;
+    const dist  = 30 + rng(seed++) * 220;
+    const cx = Math.cos(angle) * dist;
+    const cz = Math.sin(angle) * dist;
+    const count = 2 + Math.floor(rng(seed++) * 4);
+    for (let j = 0; j < count; j++) {
+      const bx = cx + (rng(seed++) - 0.5) * 30;
+      const bz = cz + (rng(seed++) - 0.5) * 30;
+      if (Math.abs(bx) < MAP_SIZE/2 - 10 && Math.abs(bz) < MAP_SIZE/2 - 10)
+        addBuilding(bx, bz, seed++);
+    }
+  }
+
+  // Trees
+  for (let i = 0; i < 120; i++) {
+    const angle = rng(seed++) * Math.PI * 2;
+    const dist  = 20 + rng(seed++) * 230;
+    addTree(Math.cos(angle)*dist, Math.sin(angle)*dist, seed++);
+  }
+
+  // Rocks
+  for (let i = 0; i < 60; i++) {
+    const angle = rng(seed++) * Math.PI * 2;
+    const dist  = 15 + rng(seed++) * 240;
+    addRock(Math.cos(angle)*dist, Math.sin(angle)*dist, seed++);
+  }
+})();
+```
+
+**Step 3: Verify in browser**
+
+Refresh the page — still shows menu overlay. Temporarily add after `scene.add(ambient);`:
+```javascript
+// TEMP: skip menu for visual check
+// Remove this after verifying
+```
+
+Instead, click F12 → Console. No errors expected. The scene is built on load.
+
+To actually see the terrain, temporarily comment out the overlay `display:flex` style and call `startGame()` — but you'll add that in Task 4. For now, just verify no console errors.
+
+---
+
+## Task 3: Chests
+
+**Files:**
+- Modify: `~/Desktop/fortnite-game/index.html` — add chest system after environment generation
+
+**Step 1: Add chest spawn code**
+
+After `generateEnvironment()` call, add:
+
+```javascript
+// ════════════════════════════════════════════════════════════════
+//  CHESTS
+// ════════════════════════════════════════════════════════════════
+const chests = [];
+
+(function spawnChests() {
+  const rng = (i) => seededRand(i * 73.1 + 99);
+  const goldMat  = new THREE.MeshLambertMaterial({ color: 0xf0c040, emissive: 0x604800, emissiveIntensity: 0.4 });
+  const darkMat  = new THREE.MeshLambertMaterial({ color: 0x8B6914 });
+
+  for (let i = 0; i < CHEST_COUNT; i++) {
+    const angle = rng(i*3)   * Math.PI * 2;
+    const dist  = 15 + rng(i*3+1) * 210;
+    const x     = Math.cos(angle) * dist;
+    const z     = Math.sin(angle) * dist;
+    const y     = placeOnTerrain(x, z);
+
+    const group  = new THREE.Group();
+    // Body
+    const bodyGeo = new THREE.BoxGeometry(1.2, 0.8, 0.7);
+    const body    = new THREE.Mesh(bodyGeo, goldMat);
+    body.castShadow = true;
+    group.add(body);
+    // Lid
+    const lidGeo = new THREE.BoxGeometry(1.2, 0.3, 0.7);
+    const lid    = new THREE.Mesh(lidGeo, darkMat);
+    lid.position.y = 0.55;
+    lid.castShadow = true;
+    group.add(lid);
+    // Lock
+    const lockGeo = new THREE.BoxGeometry(0.15, 0.15, 0.05);
+    const lockMat = new THREE.MeshLambertMaterial({ color: 0xffd700 });
+    const lock    = new THREE.Mesh(lockGeo, lockMat);
+    lock.position.set(0, 0.1, 0.38);
+    group.add(lock);
+
+    group.position.set(x, y + 0.4, z);
+
+    // Glow light
+    const light = new THREE.PointLight(0xf0c040, 1.5, 8);
+    light.position.set(0, 1.5, 0);
+    group.add(light);
+
+    scene.add(group);
+
+    chests.push({ mesh: group, x, y: y + 0.4, z, open: false, light });
+  }
+})();
+
+function openChest(chest) {
+  if (chest.open) return;
+  chest.open = true;
+  // Animate lid open
+  chest.mesh.children[1].rotation.x = -Math.PI * 0.6;
+  chest.light.color.set(0xffffff);
+  chest.light.intensity = 3;
+
+  // Give player a random weapon (not pistol as starter)
+  const keys = ['rifle','shotgun','sniper','smg'];
+  const wKey = keys[Math.floor(Math.random() * keys.length)];
+  giveWeapon(wKey);
+}
+
+function checkChestInteract() {
+  const pp = camera.position;
+  for (const chest of chests) {
+    if (chest.open) continue;
+    const dx = pp.x - chest.x, dz = pp.z - chest.z;
+    if (Math.sqrt(dx*dx + dz*dz) < 3) {
+      openChest(chest);
+      return;
+    }
+  }
+}
+```
+
+**Step 2: Add placeholder giveWeapon (will be completed in Task 5)**
+
+```javascript
+function giveWeapon(key) {
+  // Placeholder — implemented in Task 5
+  console.log('Got weapon:', key);
+}
+```
+
+**Step 3: Verify**
+
+Open browser console. No errors expected. Chests will be visible once player movement is wired up in Task 4.
+
+---
+
+## Task 4: Player Movement & FPS Camera
+
+**Files:**
+- Modify: `~/Desktop/fortnite-game/index.html` — add player system, pointer lock, WASD controls
+
+**Step 1: Add player state after the `state` object**
+
+```javascript
+// ════════════════════════════════════════════════════════════════
+//  PLAYER
+// ════════════════════════════════════════════════════════════════
+const player = {
+  hp: 100,
+  maxHp: 100,
+  velY: 0,
+  onGround: false,
+  weapon: 'pistol',
+  inventory: { pistol: { ...WEAPONS.pistol } },
+  fireCooldown: 0,
+  yaw: 0,
+  pitch: 0,
+  crouching: false,
+};
+```
+
+**Step 2: Add key/mouse input tracking**
+
+```javascript
+const keys = {};
+document.addEventListener('keydown', e => { keys[e.code] = true; });
+document.addEventListener('keyup',   e => { keys[e.code] = false; });
+
+document.addEventListener('keydown', e => {
+  if (e.code === 'KeyE' && state.phase === 'playing') checkChestInteract();
+});
+
+// Mouse look
+document.addEventListener('mousemove', e => {
+  if (state.phase !== 'playing') return;
+  player.yaw   -= e.movementX * 0.002;
+  player.pitch -= e.movementY * 0.002;
+  player.pitch  = Math.max(-Math.PI/2.2, Math.min(Math.PI/2.2, player.pitch));
+});
+
+// Pointer lock
+canvas.addEventListener('click', () => {
+  if (state.phase === 'playing') canvas.requestPointerLock();
+});
+document.addEventListener('pointerlockchange', () => {
+  document.getElementById('crosshair').style.display =
+    document.pointerLockElement === canvas ? 'block' : 'none';
+});
+
+// Shoot on click
+document.addEventListener('mousedown', e => {
+  if (e.button === 0 && state.phase === 'playing' &&
+      document.pointerLockElement === canvas) {
+    shoot();
+  }
+});
+```
+
+**Step 3: Replace the placeholder `updatePlayer` function**
+
+Find `function updatePlayer(dt) {}` and replace it:
+
+```javascript
+function updatePlayer(dt) {
+  if (player.hp <= 0) return;
+
+  // Camera rotation
+  camera.rotation.order = 'YXZ';
+  camera.rotation.y = player.yaw;
+  camera.rotation.x = player.pitch;
+
+  // Crouch
+  player.crouching = !!keys['KeyC'];
+  const speed = player.crouching ? PLAYER_SPEED * 0.5 : PLAYER_SPEED;
+  const height = player.crouching ? PLAYER_HEIGHT * 0.6 : PLAYER_HEIGHT;
+
+  // Movement direction
+  const forward = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
+  const right   = new THREE.Vector3( Math.cos(player.yaw), 0, -Math.sin(player.yaw));
+  const move    = new THREE.Vector3();
+  if (keys['KeyW']) move.addScaledVector(forward,  1);
+  if (keys['KeyS']) move.addScaledVector(forward, -1);
+  if (keys['KeyA']) move.addScaledVector(right,   -1);
+  if (keys['KeyD']) move.addScaledVector(right,    1);
+  if (move.lengthSq() > 0) move.normalize().multiplyScalar(speed * dt);
+
+  // Apply horizontal movement with wall collision
+  const next = camera.position.clone().add(move);
+  if (!checkWallCollision(next.x, camera.position.z)) camera.position.x = next.x;
+  if (!checkWallCollision(camera.position.x, next.z)) camera.position.z = next.z;
+
+  // Gravity & jump
+  if (player.onGround && keys['Space']) {
+    player.velY = JUMP_FORCE;
+    player.onGround = false;
+  }
+  player.velY += GRAVITY * dt;
+  camera.position.y += player.velY * dt;
+
+  // Terrain height
+  const groundY = getTerrainY(camera.position.x, camera.position.z) + height;
+  if (camera.position.y <= groundY) {
+    camera.position.y = groundY;
+    player.velY = 0;
+    player.onGround = true;
+  }
+
+  // Map boundary clamp
+  const halfMap = MAP_SIZE / 2 - 2;
+  camera.position.x = Math.max(-halfMap, Math.min(halfMap, camera.position.x));
+  camera.position.z = Math.max(-halfMap, Math.min(halfMap, camera.position.z));
+
+  // Fire cooldown
+  if (player.fireCooldown > 0) player.fireCooldown -= dt;
+}
+
+function getTerrainY(x, z) {
+  const ray = new THREE.Raycaster(
+    new THREE.Vector3(x, 50, z), new THREE.Vector3(0, -1, 0)
+  );
+  const hits = ray.intersectObject(terrainMesh);
+  return hits.length ? hits[0].point.y : 0;
+}
+
+function checkWallCollision(nx, nz) {
+  for (const obj of envObjects) {
+    if (Math.abs(nx - obj.x) < obj.w + 0.4 && Math.abs(nz - obj.z) < obj.d + 0.4)
+      return true;
+  }
+  return false;
+}
+```
+
+**Step 4: Wire up the PLAY button to start the game**
+
+Replace the `loadSave()` call at the bottom with:
+
+```javascript
+// Button handlers
+document.getElementById('btnPlay').addEventListener('click', () => startGame(false));
+document.getElementById('btnEndless').addEventListener('click', () => startGame(true));
+
+function startGame(endless) {
+  state.endless = endless;
+  state.phase   = 'playing';
+  state.kills   = 0;
+
+  if (endless) {
+    state.endlessLevel++;
+  }
+
+  // Reset player
+  player.hp          = 100;
+  player.velY        = 0;
+  player.onGround    = false;
+  player.weapon      = 'pistol';
+  player.inventory   = { pistol: { ...WEAPONS.pistol } };
+  player.fireCooldown= 0;
+
+  // Spawn player in center
+  camera.position.set(0, PLAYER_HEIGHT, 0);
+  player.yaw   = 0;
+  player.pitch = 0;
+  camera.rotation.order = 'YXZ';
+
+  // Reset chests
+  chests.forEach(c => {
+    c.open = false;
+    c.mesh.children[1].rotation.x = 0;
+    c.light.color.set(0xf0c040);
+    c.light.intensity = 1.5;
+  });
+
+  // Hide overlay, request pointer lock
+  document.getElementById('overlay').style.display = 'none';
+  canvas.requestPointerLock();
+
+  spawnBots();
+  initStorm();
+}
+```
+
+**Step 5: Add placeholder spawnBots and initStorm**
+
+```javascript
+function spawnBots() { /* Task 6 */ }
+function initStorm()  { /* Task 7 */ }
+```
+
+**Step 6: Verify**
+
+Open in browser. Click "PLAY LEVEL 1". Pointer lock should engage. You should be able to:
+- Walk around with WASD and see the 3D world (terrain, trees, buildings, chests)
+- Look around with mouse
+- Jump with Space
+- See cursor captured (crosshair appears)
+
+---
+
+## Task 5: Weapons & Shooting
+
+**Files:**
+- Modify: `~/Desktop/fortnite-game/index.html` — add shooting, weapon mesh, hit detection
+
+**Step 1: Add weapon arm/gun mesh**
+
+After player state declaration, add:
+
+```javascript
+// Visual gun model (simple box geometry)
+const gunGroup = new THREE.Group();
+const gunBarrel = new THREE.Mesh(
+  new THREE.BoxGeometry(0.08, 0.08, 0.6),
+  new THREE.MeshLambertMaterial({ color: 0x444444 })
+);
+gunBarrel.position.set(0, 0, -0.3);
+const gunBody = new THREE.Mesh(
+  new THREE.BoxGeometry(0.15, 0.2, 0.35),
+  new THREE.MeshLambertMaterial({ color: 0x555555 })
+);
+gunBody.position.set(0, -0.05, 0.05);
+gunGroup.add(gunBarrel, gunBody);
+gunGroup.position.set(0.28, -0.22, -0.45);
+camera.add(gunGroup);
+scene.add(camera);   // must add camera to scene for children to render
+
+// Muzzle flash
+const flashMat = new THREE.MeshBasicMaterial({ color: 0xffff80, transparent: true, opacity: 0 });
+const flashMesh = new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 6), flashMat);
+flashMesh.position.set(0, 0, -0.65);
+gunGroup.add(flashMesh);
+let flashTimer = 0;
+```
+
+**Step 2: Replace placeholder `giveWeapon`**
+
+```javascript
+function giveWeapon(key) {
+  if (player.inventory[key]) {
+    // Already have it — add ammo
+    player.inventory[key].ammo = Math.min(
+      player.inventory[key].ammo + WEAPONS[key].maxAmmo,
+      WEAPONS[key].maxAmmo * 2
+    );
+  } else {
+    player.inventory[key] = { ...WEAPONS[key] };
+  }
+  // Auto-switch to new weapon if it's better
+  const priority = ['sniper','rifle','shotgun','smg','pistol'];
+  const curPri = priority.indexOf(player.weapon);
+  const newPri = priority.indexOf(key);
+  if (newPri < curPri) player.weapon = key;
+  updateGunVisual();
+}
+
+function updateGunVisual() {
+  const w = WEAPONS[player.weapon];
+  const color = new THREE.Color(WEAPON_COLORS[player.weapon]);
+  gunBody.material.color = color;
+  // Scale barrel by weapon type
+  gunBarrel.scale.z = player.weapon === 'sniper' ? 1.6 : player.weapon === 'shotgun' ? 0.8 : 1;
+}
+```
+
+**Step 3: Add the shoot function**
+
+```javascript
+// Bullet impact particles pool
+const impactParticles = [];
+const impactGeo = new THREE.SphereGeometry(0.05, 4, 4);
+const impactMat = new THREE.MeshBasicMaterial({ color: 0xffcc44 });
+for (let i = 0; i < 20; i++) {
+  const m = new THREE.Mesh(impactGeo, impactMat.clone());
+  m.visible = false;
+  scene.add(m);
+  impactParticles.push({ mesh: m, life: 0, vel: new THREE.Vector3() });
+}
+let impactIdx = 0;
+
+function spawnImpact(pos) {
+  const p = impactParticles[impactIdx++ % impactParticles.length];
+  p.mesh.position.copy(pos);
+  p.mesh.visible = true;
+  p.life = 0.4;
+  p.vel.set((Math.random()-0.5)*4, Math.random()*4, (Math.random()-0.5)*4);
+}
+
+function shoot() {
+  const inv = player.inventory[player.weapon];
+  if (!inv || inv.ammo <= 0 || player.fireCooldown > 0) return;
+
+  inv.ammo--;
+  player.fireCooldown = WEAPONS[player.weapon].fireRate;
+
+  // Muzzle flash
+  flashMesh.material.opacity = 1;
+  flashTimer = 0.08;
+
+  const pellets = WEAPONS[player.weapon].pellets || 1;
+  const spread  = WEAPONS[player.weapon].spread;
+
+  for (let p = 0; p < pellets; p++) {
+    const dir = new THREE.Vector3(
+      (Math.random() - 0.5) * spread * 2,
+      (Math.random() - 0.5) * spread * 2,
+      -1
+    ).normalize();
+    dir.applyQuaternion(camera.quaternion);
+
+    const ray = new THREE.Raycaster(camera.position.clone(), dir, 0.1, WEAPONS[player.weapon].range);
+    // Check bots
+    for (const bot of bots) {
+      if (!bot.alive) continue;
+      const hits = ray.intersectObject(bot.mesh, true);
+      if (hits.length) {
+        damageBot(bot, WEAPONS[player.weapon].damage);
+        spawnImpact(hits[0].point);
+        break;
+      }
+    }
+    // Check environment (visual impact only)
+    const envHits = ray.intersectObjects(scene.children, false);
+    if (envHits.length) spawnImpact(envHits[0].point);
+  }
+}
+
+// Update impact particles in the loop — add to updatePlayer:
+function updateImpacts(dt) {
+  for (const p of impactParticles) {
+    if (p.life <= 0) continue;
+    p.life -= dt;
+    p.mesh.position.addScaledVector(p.vel, dt);
+    p.vel.y += GRAVITY * dt;
+    p.mesh.material.opacity = p.life / 0.4;
+    if (p.life <= 0) p.mesh.visible = false;
+  }
+  // Muzzle flash fade
+  if (flashTimer > 0) {
+    flashTimer -= dt;
+    flashMesh.material.opacity = flashTimer / 0.08;
+    if (flashTimer <= 0) flashMesh.material.opacity = 0;
+  }
+}
+```
+
+**Step 4: Call `updateImpacts` inside the main loop**
+
+In the `loop` function's `if (state.phase === 'playing')` block, add:
+```javascript
+updateImpacts(dt);
+```
+
+**Step 5: Handle weapon switch with number keys**
+
+```javascript
+document.addEventListener('keydown', e => {
+  if (state.phase !== 'playing') return;
+  const wMap = { Digit1:'pistol', Digit2:'rifle', Digit3:'shotgun', Digit4:'sniper', Digit5:'smg' };
+  if (wMap[e.code] && player.inventory[wMap[e.code]]) {
+    player.weapon = wMap[e.code];
+    updateGunVisual();
+  }
+});
+```
+
+**Step 6: Verify**
+
+1. Start game, walk up to a chest, press E — console logs "Got weapon: [name]"
+2. Click to shoot — gun flashes, impact particles appear on surfaces
+3. No console errors
+
+---
+
+## Task 6: Bot Characters & AI
+
+**Files:**
+- Modify: `~/Desktop/fortnite-game/index.html` — replace spawnBots placeholder, add bot AI
+
+**Step 1: Add bot data structures after player section**
+
+```javascript
+// ════════════════════════════════════════════════════════════════
+//  BOTS
+// ════════════════════════════════════════════════════════════════
+const bots = [];
+
+// Bot materials
+const botBodyMat = new THREE.MeshLambertMaterial({ color: 0x2244aa });
+const botHeadMat = new THREE.MeshLambertMaterial({ color: 0xffdead });
+const botHitMat  = new THREE.MeshLambertMaterial({ color: 0xff8800, emissive: 0xff4400, emissiveIntensity: 1 });
+
+function createBotMesh() {
+  const group = new THREE.Group();
+  // Body
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.9, 0.35), botBodyMat.clone());
+  body.position.y = 0.9;
+  body.castShadow = true;
+  group.add(body);
+  // Head
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), botHeadMat.clone());
+  head.position.y = 1.6;
+  head.castShadow = true;
+  group.add(head);
+  // Arms
+  for (const side of [-1, 1]) {
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.7, 0.18), botBodyMat.clone());
+    arm.position.set(side * 0.42, 0.85, 0);
+    arm.castShadow = true;
+    group.add(arm);
+  }
+  // Legs
+  for (const side of [-1, 1]) {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.75, 0.22), botBodyMat.clone());
+    leg.position.set(side * 0.17, 0.3, 0);
+    leg.castShadow = true;
+    group.add(leg);
+  }
+  return group;
+}
+```
+
+**Step 2: Replace spawnBots placeholder**
+
+```javascript
+function spawnBots() {
+  // Clear existing
+  for (const b of bots) scene.remove(b.mesh);
+  bots.length = 0;
+
+  const lvl = state.endless ? 100 : state.level;
+  const t   = (lvl - 1) / 99;
+  const botAccuracy     = 0.05 + t * 0.90;
+  const botSpeed        = (0.5  + t * 1.0) * 5;
+  const botAggroRadius  = 20 + t * 80;
+
+  const rng = (i) => seededRand(i * 43.7 + 17);
+
+  for (let i = 0; i < NUM_BOTS; i++) {
+    const angle = rng(i*4)     * Math.PI * 2;
+    const dist  = 30 + rng(i*4+1) * 220;
+    const x     = Math.cos(angle) * dist;
+    const z     = Math.sin(angle) * dist;
+    const y     = getTerrainY(x, z);
+
+    const mesh = createBotMesh();
+    mesh.position.set(x, y, z);
+    scene.add(mesh);
+
+    // Each bot gets a random weapon
+    const wKeys = ['pistol','rifle','shotgun','smg'];
+    const wKey  = wKeys[Math.floor(rng(i*4+2) * wKeys.length)];
+
+    bots.push({
+      mesh, alive: true,
+      hp: 100, maxHp: 100,
+      x, y, z,
+      vx: 0, vz: 0,
+      yaw: rng(i*4+3) * Math.PI * 2,
+      state: 'patrol',
+      weapon: wKey,
+      fireCooldown: Math.random() * 2,
+      hitFlash: 0,
+      accuracy: botAccuracy,
+      speed: botSpeed,
+      aggroRadius: botAggroRadius,
+      target: null,   // another bot or 'player'
+      chestTarget: null,
+      deathTimer: 0,
+      walkPhase: rng(i*4+3) * Math.PI * 2,
+    });
+  }
+  state.botsAlive = NUM_BOTS;
+}
+```
+
+**Step 3: Replace updateBots placeholder**
+
+```javascript
+function updateBots(dt) {
+  let alive = 0;
+  for (const bot of bots) {
+    if (!bot.alive) {
+      if (bot.deathTimer > 0) {
+        bot.deathTimer -= dt;
+        bot.mesh.position.y -= dt * 0.5;
+        bot.mesh.children.forEach(c => {
+          if (c.material) c.material.opacity = Math.max(0, bot.deathTimer / 2);
+        });
+        if (bot.deathTimer <= 0) bot.mesh.visible = false;
+      }
+      continue;
+    }
+    alive++;
+
+    const pp  = camera.position;
+    const dx  = pp.x - bot.x;
+    const dz  = pp.z - bot.z;
+    const distToPlayer = Math.sqrt(dx*dx + dz*dz);
+
+    // Ghost mode for distant bots
+    if (distToPlayer > BOT_GHOST_R) {
+      bot.x += (Math.random()-0.5) * 0.5;
+      bot.z += (Math.random()-0.5) * 0.5;
+      continue;
+    }
+
+    // ── AI State Machine ──
+    runBotAI(bot, dt, distToPlayer);
+    runBotMovement(bot, dt);
+    runBotShooting(bot, dt, distToPlayer);
+
+    // Hit flash
+    if (bot.hitFlash > 0) {
+      bot.hitFlash -= dt;
+      const flashOn = bot.hitFlash > 0;
+      bot.mesh.children.forEach(c => {
+        if (c.material) c.material.color.set(flashOn ? 0xff8800 : (c === bot.mesh.children[1] ? 0xffdead : 0x2244aa));
+      });
+    }
+
+    // Sync mesh position
+    const groundY = getTerrainY(bot.x, bot.z);
+    bot.y = groundY;
+    bot.mesh.position.set(bot.x, bot.y, bot.z);
+    bot.mesh.rotation.y = bot.yaw;
+    // Walk animation
+    bot.walkPhase += dt * 4;
+    bot.mesh.children[5].rotation.x =  Math.sin(bot.walkPhase) * 0.4; // legs
+    bot.mesh.children[6].rotation.x = -Math.sin(bot.walkPhase) * 0.4;
+  }
+  state.botsAlive = alive;
+}
+
+function runBotAI(bot, dt, distToPlayer) {
+  // Check if player visible
+  const pp = camera.position;
+  const dx = pp.x - bot.x, dz = pp.z - bot.z;
+  const playerVisible = distToPlayer < bot.aggroRadius && hasLOS(bot, pp);
+
+  if (bot.hp < 25) {
+    bot.state = 'flee';
+  } else if (playerVisible && distToPlayer < 15) {
+    bot.state = 'attack';
+    bot.target = 'player';
+  } else if (playerVisible) {
+    bot.state = 'chase';
+    bot.target = 'player';
+  } else if (bot.state === 'attack' || bot.state === 'chase') {
+    // Lost sight
+    bot.state = 'patrol';
+    bot.target = null;
+  } else {
+    bot.state = 'patrol';
+  }
+}
+
+function hasLOS(bot, targetPos) {
+  const dir = new THREE.Vector3(targetPos.x - bot.x, 0, targetPos.z - bot.z).normalize();
+  const ray = new THREE.Raycaster(
+    new THREE.Vector3(bot.x, bot.y + 1.5, bot.z), dir, 0, 150
+  );
+  // Check environment objects for occlusion (simplified)
+  for (const obj of envObjects) {
+    const ddx = targetPos.x - obj.x, ddz = targetPos.z - obj.z;
+    const dbx = bot.x - obj.x, dbz = bot.z - obj.z;
+    if (Math.abs(dbx) > obj.w * 3 && Math.abs(dbz) > obj.d * 3) continue;
+    // Check if box is between bot and target
+    const t = Math.max(0, Math.min(1, (dbx*ddx + dbz*ddz) / (ddx*ddx + ddz*ddz + 0.001)));
+    const cx = bot.x + t*ddx - obj.x, cz = bot.z + t*ddz - obj.z;
+    if (Math.abs(cx) < obj.w + 0.2 && Math.abs(cz) < obj.d + 0.2) return false;
+  }
+  return true;
+}
+
+function runBotMovement(bot, dt) {
+  let tx = bot.x, tz = bot.z;
+
+  if (bot.state === 'patrol') {
+    // Random walk — change direction occasionally
+    if (Math.random() < dt * 0.5) bot.yaw += (Math.random()-0.5) * 1.5;
+    tx = bot.x + Math.sin(bot.yaw) * bot.speed * dt * 0.4;
+    tz = bot.z + Math.cos(bot.yaw) * bot.speed * dt * 0.4;
+  } else if (bot.state === 'chase') {
+    const pp = camera.position;
+    bot.yaw = Math.atan2(pp.x - bot.x, pp.z - bot.z);
+    tx = bot.x + Math.sin(bot.yaw) * bot.speed * dt;
+    tz = bot.z + Math.cos(bot.yaw) * bot.speed * dt;
+  } else if (bot.state === 'attack') {
+    // Stay still but face player
+    const pp = camera.position;
+    bot.yaw = Math.atan2(pp.x - bot.x, pp.z - bot.z);
+  } else if (bot.state === 'flee') {
+    const pp = camera.position;
+    bot.yaw = Math.atan2(bot.x - pp.x, bot.z - pp.z);
+    tx = bot.x + Math.sin(bot.yaw) * bot.speed * dt * 1.2;
+    tz = bot.z + Math.cos(bot.yaw) * bot.speed * dt * 1.2;
+  }
+
+  // Clamp to map
+  const h = MAP_SIZE/2 - 2;
+  tx = Math.max(-h, Math.min(h, tx));
+  tz = Math.max(-h, Math.min(h, tz));
+  if (!checkWallCollision(tx, bot.z)) bot.x = tx;
+  if (!checkWallCollision(bot.x, tz)) bot.z = tz;
+}
+
+function runBotShooting(bot, dt, distToPlayer) {
+  if (bot.state !== 'attack') return;
+  bot.fireCooldown -= dt;
+  if (bot.fireCooldown > 0) return;
+  bot.fireCooldown = WEAPONS[bot.weapon].fireRate * (1 / bot.accuracy) * 0.5;
+
+  // Accuracy roll
+  if (Math.random() > bot.accuracy) return;
+
+  // Damage player
+  const dmg = WEAPONS[bot.weapon].damage;
+  damagePlayer(dmg * 0.6); // bots deal slightly reduced damage
+}
+
+function damageBot(bot, dmg) {
+  if (!bot.alive) return;
+  bot.hp -= dmg;
+  bot.hitFlash = 0.2;
+  if (bot.hp <= 0) killBot(bot);
+}
+
+function killBot(bot) {
+  bot.alive = false;
+  bot.deathTimer = 2;
+  // Make transparent
+  bot.mesh.children.forEach(c => {
+    if (c.material) {
+      c.material = c.material.clone();
+      c.material.transparent = true;
+    }
+  });
+  state.kills++;
+  checkWinCondition();
+}
+
+function damagePlayer(dmg) {
+  player.hp -= dmg;
+  // Red flash HUD (handled in updateHUD)
+  player.hitTime = 0.3;
+  if (player.hp <= 0) killPlayer();
+}
+
+let playerHitTime = 0;
+function killPlayer() {
+  player.hp = 0;
+  state.phase = 'dead';
+  document.exitPointerLock();
+  showOverlay('YOU DIED', `Level ${state.level} — Try again?`, 'RETRY', 'MAIN MENU');
+}
+
+function checkWinCondition() {
+  if (state.botsAlive <= 0 && state.phase === 'playing') {
+    state.phase = 'win';
+    document.exitPointerLock();
+    if (!state.endless) {
+      state.level = Math.min(state.level + 1, 101);
+      saveGame();
+    }
+    const msg = state.level > 100 ? 'ENDLESS MODE UNLOCKED!' : `Level ${state.level - 1} complete!`;
+    showOverlay('VICTORY!', msg, state.level > 100 ? 'ENDLESS MODE' : `LEVEL ${state.level}`, 'MAIN MENU');
+  }
+}
+
+function showOverlay(title, msg, btn1, btn2) {
+  const ov = document.getElementById('overlay');
+  ov.innerHTML = `
+    <h1>${title}</h1>
+    <p>${msg}</p>
+    <button class="btn" id="ovBtn1">${btn1}</button>
+    <button class="btn" id="ovBtn2">${btn2}</button>
+  `;
+  ov.style.display = 'flex';
+  document.getElementById('ovBtn1').addEventListener('click', () => {
+    ov.style.display = 'none';
+    if (title === 'VICTORY!' && state.level > 100) startGame(true);
+    else startGame(state.endless);
+  });
+  document.getElementById('ovBtn2').addEventListener('click', () => {
+    ov.style.display = 'flex';
+    ov.innerHTML = getMainMenuHTML();
+    bindMainMenuButtons();
+  });
+}
+
+function getMainMenuHTML() {
+  const save = JSON.parse(localStorage.getItem('brSave') || '{}');
+  const unlocked = save.endlessUnlocked;
+  return `
+    <h1>BATTLE ROYALE</h1>
+    <p>100 Levels · Realistic FPS · Last One Standing</p>
+    <button class="btn" id="btnPlay">PLAY LEVEL ${state.level > 100 ? 100 : state.level}</button>
+    ${unlocked ? '<button class="btn" id="btnEndless">ENDLESS MODE</button>' : ''}
+    <p style="font-size:0.85em;color:#888;margin-top:1em;">Level reached: ${state.level}/100</p>
+  `;
+}
+function bindMainMenuButtons() {
+  document.getElementById('btnPlay')?.addEventListener('click', () => startGame(false));
+  document.getElementById('btnEndless')?.addEventListener('click', () => startGame(true));
+}
+```
+
+**Step 4: Verify**
+
+Start game. Walk near bots — they should chase and try to shoot you. Shooting a bot flashes it orange. After taking enough hits, bot falls and fades out.
+
+---
+
+## Task 7: Storm System
+
+**Files:**
+- Modify: `~/Desktop/fortnite-game/index.html` — replace initStorm and updateStorm placeholders
+
+**Step 1: Add storm state after player state**
+
+```javascript
+// ════════════════════════════════════════════════════════════════
+//  STORM
+// ════════════════════════════════════════════════════════════════
+const storm = {
+  radius: MAP_SIZE * 0.48,
+  targetRadius: MAP_SIZE * 0.48,
+  cx: 0, cz: 0,            // center
+  shrinkTimer: STORM_INTERVAL,
+  shrinkCount: 0,
+  damageTimer: 0,
+};
+
+// Storm visual wall (cylinder)
+const stormWallGeo = new THREE.CylinderGeometry(1, 1, 60, 48, 1, true);
+const stormWallMat = new THREE.MeshBasicMaterial({
+  color: 0x4400ff, transparent: true, opacity: 0.18,
+  side: THREE.BackSide
+});
+const stormWall = new THREE.Mesh(stormWallGeo, stormWallMat);
+stormWall.position.y = 5;
+scene.add(stormWall);
+```
+
+**Step 2: Replace initStorm placeholder**
+
+```javascript
+function initStorm() {
+  storm.radius       = MAP_SIZE * 0.48;
+  storm.targetRadius = MAP_SIZE * 0.48;
+  storm.cx = 0; storm.cz = 0;
+  storm.shrinkTimer  = STORM_INTERVAL;
+  storm.shrinkCount  = 0;
+  storm.damageTimer  = 0;
+  stormWall.scale.set(storm.radius, 1, storm.radius);
+  stormWall.visible  = true;
+}
+```
+
+**Step 3: Replace updateStorm placeholder**
+
+```javascript
+function updateStorm(dt) {
+  // Shrink storm periodically
+  storm.shrinkTimer -= dt;
+  if (storm.shrinkTimer <= 0 && storm.shrinkCount < STORM_SHRINKS) {
+    storm.shrinkCount++;
+    storm.shrinkTimer = STORM_INTERVAL;
+    const t = storm.shrinkCount / STORM_SHRINKS;
+    storm.targetRadius = MAP_SIZE * 0.48 * (1 - t * 0.85);
+    // Offset center slightly each shrink
+    const angle = Math.random() * Math.PI * 2;
+    const shift = storm.targetRadius * 0.2;
+    storm.cx = Math.cos(angle) * shift;
+    storm.cz = Math.sin(angle) * shift;
+  }
+
+  // Smoothly interpolate current radius toward target
+  storm.radius += (storm.targetRadius - storm.radius) * dt * 0.3;
+  stormWall.scale.set(storm.radius, 1, storm.radius);
+  stormWall.position.set(storm.cx, 5, storm.cz);
+
+  // Damage player if outside storm
+  const pp = camera.position;
+  const dpx = pp.x - storm.cx, dpz = pp.z - storm.cz;
+  const playerDistToCenter = Math.sqrt(dpx*dpx + dpz*dpz);
+  if (playerDistToCenter > storm.radius) {
+    storm.damageTimer += dt;
+    if (storm.damageTimer >= 1) {
+      storm.damageTimer = 0;
+      damagePlayer(STORM_DAMAGE);
+    }
+    player.inStorm = true;
+  } else {
+    storm.damageTimer = 0;
+    player.inStorm = false;
+  }
+
+  // Push bots toward storm center (ghost simulation)
+  for (const bot of bots) {
+    if (!bot.alive) continue;
+    const bdx = bot.x - storm.cx, bdz = bot.z - storm.cz;
+    if (Math.sqrt(bdx*bdx + bdz*bdz) > storm.radius * 1.05) {
+      // Nudge toward center
+      bot.x += (storm.cx - bot.x) * dt * 0.2;
+      bot.z += (storm.cz - bot.z) * dt * 0.2;
+    }
+  }
+}
+```
+
+**Step 4: Verify**
+
+Start game. After 90 seconds the storm wall (purple cylinder) visibly shrinks. Walk outside the blue/purple wall — health should decrease 5 HP per second.
+
+---
+
+## Task 8: HUD
+
+**Files:**
+- Modify: `~/Desktop/fortnite-game/index.html` — replace updateHUD placeholder
+
+**Step 1: Replace updateHUD placeholder**
+
+```javascript
+function updateHUD() {
+  const W = hud.width, H = hud.height;
+  hctx.clearRect(0, 0, W, H);
+
+  if (state.phase !== 'playing') return;
+
+  // ── Storm warning flash ──
+  if (player.inStorm) {
+    hctx.save();
+    hctx.globalAlpha = 0.25 + 0.15 * Math.sin(Date.now() / 200);
+    hctx.strokeStyle = '#4400ff';
+    hctx.lineWidth = 20;
+    hctx.strokeRect(0, 0, W, H);
+    hctx.restore();
+  }
+
+  // ── Hit flash ──
+  if (player.hitTime > 0) {
+    player.hitTime -= 0.016;
+    hctx.save();
+    hctx.globalAlpha = player.hitTime / 0.3 * 0.35;
+    hctx.fillStyle = '#ff0000';
+    hctx.fillRect(0, 0, W, H);
+    hctx.restore();
+  }
+
+  // ── Health bar (bottom left) ──
+  const hpRatio = Math.max(0, player.hp / player.maxHp);
+  hctx.fillStyle = 'rgba(0,0,0,0.55)';
+  hctx.beginPath();
+  hctx.roundRect(24, H - 58, 204, 32, 6);
+  hctx.fill();
+  const hpColor = hpRatio > 0.5 ? '#44ff44' : hpRatio > 0.25 ? '#ffaa00' : '#ff3333';
+  hctx.fillStyle = hpColor;
+  hctx.beginPath();
+  hctx.roundRect(28, H - 54, 196 * hpRatio, 24, 4);
+  hctx.fill();
+  hctx.fillStyle = '#fff';
+  hctx.font = 'bold 13px Segoe UI';
+  hctx.textAlign = 'center';
+  hctx.fillText(`HP: ${Math.ceil(player.hp)}`, 126, H - 36);
+
+  // ── Ammo counter (bottom right) ──
+  const inv = player.inventory[player.weapon];
+  const ammoText = inv ? `${inv.ammo} / ${WEAPONS[player.weapon].maxAmmo}` : '—';
+  hctx.fillStyle = 'rgba(0,0,0,0.55)';
+  hctx.beginPath();
+  hctx.roundRect(W - 154, H - 58, 130, 32, 6);
+  hctx.fill();
+  hctx.fillStyle = '#fff';
+  hctx.font = 'bold 18px Segoe UI';
+  hctx.textAlign = 'center';
+  hctx.fillText(ammoText, W - 89, H - 36);
+
+  // ── Weapon name (bottom right, above ammo) ──
+  hctx.fillStyle = '#f0c040';
+  hctx.font = 'bold 13px Segoe UI';
+  hctx.fillText(WEAPONS[player.weapon].name, W - 89, H - 64);
+
+  // ── Kills counter (top left) ──
+  hctx.fillStyle = 'rgba(0,0,0,0.5)';
+  hctx.beginPath();
+  hctx.roundRect(16, 16, 130, 38, 6);
+  hctx.fill();
+  hctx.fillStyle = '#fff';
+  hctx.font = 'bold 14px Segoe UI';
+  hctx.textAlign = 'left';
+  hctx.fillText(`Kills: ${state.kills}`, 28, 40);
+
+  // ── Level / Bots alive (top center) ──
+  const levelLabel = state.endless ? `Endless ${state.endlessLevel}` : `Level ${state.level}`;
+  hctx.fillStyle = 'rgba(0,0,0,0.5)';
+  hctx.beginPath();
+  hctx.roundRect(W/2 - 100, 10, 200, 44, 6);
+  hctx.fill();
+  hctx.fillStyle = '#f0c040';
+  hctx.font = 'bold 15px Segoe UI';
+  hctx.textAlign = 'center';
+  hctx.fillText(levelLabel, W/2, 30);
+  hctx.fillStyle = '#aaa';
+  hctx.font = '12px Segoe UI';
+  hctx.fillText(`${state.botsAlive} players remaining`, W/2, 47);
+
+  // ── Minimap (top right) ──
+  drawMinimap(W - 134, 10, 124, 124);
+
+  // ── Storm timer ──
+  const stormIn = Math.ceil(storm.shrinkTimer);
+  if (stormIn < 30) {
+    hctx.fillStyle = stormIn < 10 ? '#ff4444' : '#ffaa00';
+    hctx.font = 'bold 13px Segoe UI';
+    hctx.textAlign = 'center';
+    hctx.fillText(`Storm closes in ${stormIn}s`, W/2, 70);
+  }
+}
+
+function drawMinimap(mx, my, mw, mh) {
+  const scale = mw / MAP_SIZE;
+
+  // Background
+  hctx.fillStyle = 'rgba(0,0,0,0.6)';
+  hctx.beginPath();
+  hctx.roundRect(mx, my, mw, mh, 8);
+  hctx.fill();
+
+  // Storm circle on minimap
+  const stormScreenR = storm.radius * scale;
+  const scx = mx + mw/2 + storm.cx * scale;
+  const scz = my + mh/2 + storm.cz * scale;
+  hctx.strokeStyle = 'rgba(100,0,255,0.8)';
+  hctx.lineWidth = 2;
+  hctx.beginPath();
+  hctx.arc(scx, scz, stormScreenR, 0, Math.PI*2);
+  hctx.stroke();
+
+  // Chest markers
+  hctx.fillStyle = '#f0c040';
+  for (const chest of chests) {
+    if (chest.open) continue;
+    const cx = mx + mw/2 + chest.x * scale;
+    const cz = my + mh/2 + chest.z * scale;
+    hctx.fillRect(cx - 2, cz - 2, 4, 4);
+  }
+
+  // Bot dots
+  hctx.fillStyle = '#ff4444';
+  for (const bot of bots) {
+    if (!bot.alive) continue;
+    const bx = mx + mw/2 + bot.x * scale;
+    const bz = my + mh/2 + bot.z * scale;
+    hctx.beginPath();
+    hctx.arc(bx, bz, 2, 0, Math.PI*2);
+    hctx.fill();
+  }
+
+  // Player dot (white, centered)
+  const px = mx + mw/2 + camera.position.x * scale;
+  const pz = my + mh/2 + camera.position.z * scale;
+  hctx.fillStyle = '#fff';
+  hctx.beginPath();
+  hctx.arc(px, pz, 3.5, 0, Math.PI*2);
+  hctx.fill();
+  // Player direction arrow
+  hctx.strokeStyle = '#fff';
+  hctx.lineWidth = 1.5;
+  hctx.beginPath();
+  hctx.moveTo(px, pz);
+  hctx.lineTo(px - Math.sin(player.yaw)*10, pz - Math.cos(player.yaw)*10);
+  hctx.stroke();
+
+  // Minimap border
+  hctx.strokeStyle = 'rgba(255,255,255,0.3)';
+  hctx.lineWidth = 1;
+  hctx.beginPath();
+  hctx.roundRect(mx, my, mw, mh, 8);
+  hctx.stroke();
+}
+```
+
+**Step 2: Add `player.hitTime` and `player.inStorm` initialization to player object**
+
+Find `const player = {` and add these fields:
+```javascript
+  hitTime: 0,
+  inStorm: false,
+```
+
+**Step 3: Verify**
+
+Start game. You should see:
+- Health bar (bottom left), green → orange → red as HP drops
+- Ammo counter (bottom right)
+- Level/bots-remaining counter (top center)
+- Minimap (top right) with white player dot, red bot dots, yellow chest squares, purple storm circle
+- Red screen flash when taking damage
+
+---
+
+## Task 9: Final Polish & Main Menu
+
+**Files:**
+- Modify: `~/Desktop/fortnite-game/index.html` — polish main menu HTML and ensure clean UX
+
+**Step 1: Update the initial HTML overlay to use dynamic functions**
+
+Replace the inline button handlers in the HTML `<div id="overlay">` section with just IDs (already done in Task 6's `bindMainMenuButtons`).
+
+Replace the existing `loadSave()` + button-listener block with:
+
+```javascript
+// Initial menu setup
+(function setupMenu() {
+  const ov = document.getElementById('overlay');
+  ov.innerHTML = getMainMenuHTML();
+  bindMainMenuButtons();
+})();
+```
+
+**Step 2: Add sky gradient and sun flare effect**
+
+Replace `scene.background = new THREE.Color(0x87CEEB);` with:
+```javascript
+// Gradient sky using a large sphere
+const skyGeo = new THREE.SphereGeometry(500, 32, 15);
+const skyMat = new THREE.ShaderMaterial({
+  side: THREE.BackSide,
+  uniforms: {
+    topColor:    { value: new THREE.Color(0x0077ff) },
+    bottomColor: { value: new THREE.Color(0xc8e8ff) },
+    offset: { value: 30 }, exponent: { value: 0.6 }
+  },
+  vertexShader: `
+    varying vec3 vWorldPosition;
+    void main() {
+      vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+      vWorldPosition = worldPosition.xyz;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`,
+  fragmentShader: `
+    uniform vec3 topColor; uniform vec3 bottomColor;
+    uniform float offset; uniform float exponent;
+    varying vec3 vWorldPosition;
+    void main() {
+      float h = normalize(vWorldPosition + offset).y;
+      gl_FragColor = vec4(mix(bottomColor, topColor, max(pow(max(h, 0.0), exponent), 0.0)), 1.0);
+    }`
+});
+const sky = new THREE.Mesh(skyGeo, skyMat);
+scene.add(sky);
+scene.background = null;
+scene.fog = new THREE.FogExp2(0xc8e8ff, 0.0025);
+```
+
+**Step 3: Add grass color variation to terrain**
+
+Replace the `terrainMat` color line with a vertex-colored approach:
+```javascript
+terrainMat.vertexColors = true;
+// Add color attribute after vertex displacement
+const colors = [];
+for (let i = 0; i < pos.count; i++) {
+  const h = pos.getZ(i);
+  const r = 0.25 + h * 0.01, g = 0.48 + h * 0.02, b = 0.18;
+  colors.push(r, g, b);
+}
+terrainGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+```
+
+**Step 4: Verify complete game**
+
+Full play-through checklist:
+- [ ] Main menu shows correct level
+- [ ] Click Play → game starts, pointer lock engages
+- [ ] WASD movement works, camera follows
+- [ ] Chests glow gold, press E opens them
+- [ ] Weapon received from chest, weapon name appears in HUD
+- [ ] Click to shoot, impact particles appear
+- [ ] Bots wander, chase when close, shoot back
+- [ ] Bot flashes orange on hit, collapses and fades on kill
+- [ ] Kill count increments on HUD
+- [ ] Storm shrinks after 90s, storm wall visible
+- [ ] Taking damage shows red flash, HP bar decreases
+- [ ] Killing all 99 bots shows VICTORY screen
+- [ ] Dying shows YOU DIED screen
+- [ ] Level advances on win, saved to localStorage
+- [ ] Minimap shows all elements correctly
+
+---
+
+## Task 10: Endless Mode & Level Select Polish
+
+**Files:**
+- Modify: `~/Desktop/fortnite-game/index.html` — add level select screen and endless mode UI
+
+**Step 1: Update getMainMenuHTML to include a level select grid for completed levels**
+
+```javascript
+function getMainMenuHTML() {
+  const save = JSON.parse(localStorage.getItem('brSave') || '{}');
+  const maxLevel = save.level || 1;
+  const unlocked = save.endlessUnlocked || maxLevel > 100;
+
+  // Build level grid (show up to maxLevel + 5 previews)
+  let grid = '<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;max-width:420px;margin-bottom:1.2em;max-height:160px;overflow-y:auto;">';
+  for (let i = 1; i <= Math.min(maxLevel + 1, 100); i++) {
+    const done    = i < maxLevel;
+    const current = i === maxLevel;
+    const bg      = done ? '#2a5a2a' : current ? '#f0c040' : '#333';
+    const col     = done ? '#88ff88' : current ? '#111' : '#666';
+    grid += `<button class="btn" onclick="launchLevel(${i})"
+      style="padding:0.3em 0.6em;font-size:0.8em;background:${bg};color:${col};min-width:38px;">${i}</button>`;
+  }
+  grid += '</div>';
+
+  return `
+    <h1>BATTLE ROYALE</h1>
+    <p style="margin-bottom:0.8em">Select a level or continue:</p>
+    ${grid}
+    <button class="btn" id="btnPlay">▶ LEVEL ${Math.min(maxLevel, 100)}</button>
+    ${unlocked ? '<button class="btn" id="btnEndless" style="background:#6622cc;color:#fff">∞ ENDLESS MODE</button>' : ''}
+    <p style="font-size:0.8em;color:#777;margin-top:0.8em">Progress saved automatically</p>
+  `;
+}
+
+window.launchLevel = function(lvl) {
+  state.level = lvl;
+  document.getElementById('overlay').style.display = 'none';
+  startGame(false);
+};
+```
+
+**Step 2: Update endless bot scaling for endless levels beyond 100**
+
+In `spawnBots`, replace the level calculation:
+
+```javascript
+function spawnBots() {
+  for (const b of bots) scene.remove(b.mesh);
+  bots.length = 0;
+
+  let t;
+  if (state.endless) {
+    const el = state.endlessLevel;
+    t = Math.min(1, 0.99 + el * 0.002);  // starts at max difficulty
+  } else {
+    t = (Math.max(1, state.level) - 1) / 99;
+  }
+
+  const botAccuracy    = Math.min(0.99, 0.05 + t * 0.94);
+  const botSpeed       = Math.min(12,   (0.5 + t * 1.0) * 5);
+  const botAggroRadius = Math.min(120,   20 + t * 100);
+  // ... rest of spawnBots unchanged
+```
+
+**Step 3: Final browser verify**
+
+- Level select grid appears on menu
+- Clicking a completed level number starts that level's difficulty
+- Beating level 100 shows "ENDLESS MODE UNLOCKED!"
+- Endless mode button appears on menu after unlock
+- Endless level counter shown on HUD during endless play
+
+---
+
+## Completion
+
+The game is now feature-complete. The final `index.html` is a self-contained, dependency-free (beyond Three.js CDN) browser game.
+
+**Recommended verification order:**
+1. Open in Chrome (best WebGL support)
+2. Play level 1 through to completion (should be very easy with 5% bot accuracy)
+3. Skip ahead via level select to level 50 — bots should feel noticeably harder
+4. Verify storm mechanic by standing still for 3+ minutes
+5. Verify localStorage persistence by closing and reopening the browser tab
+
+**Known limitations (by design — out of scope):**
+- No audio
+- No multiplayer
+- No building mechanic
+- Desktop browser only (no mobile)
