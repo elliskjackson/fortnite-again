@@ -391,7 +391,7 @@ const chests = [];
 
 (function spawnChests() {
   const rng = (i) => seededRand(i * 73.1 + 99);
-  const goldMat  = new THREE.MeshLambertMaterial({ color: 0xf0c040, emissive: 0x604800, emissiveIntensity: 0.4 });
+  const goldMat  = new THREE.MeshStandardMaterial({ color: 0xf0c040, emissive: 0xf0c040, emissiveIntensity: 0.6, roughness: 0.4, metalness: 0.8 });
   const darkMat  = new THREE.MeshLambertMaterial({ color: 0x8B6914 });
 
   for (let i = 0; i < CHEST_COUNT; i++) {
@@ -439,7 +439,7 @@ function openChest(chest) {
   // Animate lid open
   chest.mesh.children[1].rotation.x = -Math.PI * 0.6;
   chest.light.color.set(0xffffff);
-  chest.light.intensity = 3;
+  chest.light.intensity = 6;
 
   // Give player a random weapon (not pistol as starter)
   const keys = ['rifle','shotgun','sniper','smg'];
@@ -631,9 +631,15 @@ const storm = {
 };
 
 const stormWallGeo = new THREE.CylinderGeometry(1, 1, 60, 48, 1, true);
-const stormWallMat = new THREE.MeshBasicMaterial({
-  color: 0x4400ff, transparent: true, opacity: 0.18,
-  side: THREE.BackSide
+const stormWallMat = new THREE.MeshStandardMaterial({
+  color: 0x6600ff,
+  emissive: 0x4400cc,
+  emissiveIntensity: 1.2,
+  transparent: true,
+  opacity: 0.22,
+  side: THREE.BackSide,
+  roughness: 1.0,
+  metalness: 0.0
 });
 const stormWall = new THREE.Mesh(stormWallGeo, stormWallMat);
 stormWall.position.y = 5;
@@ -659,8 +665,8 @@ camera.add(gunGroup);
 scene.add(camera);   // must add camera to scene for children to render
 
 // Muzzle flash
-const flashMat = new THREE.MeshBasicMaterial({ color: 0xffff80, transparent: true, opacity: 0 });
-const flashMesh = new THREE.Mesh(new THREE.SphereGeometry(0.12, 6, 6), flashMat);
+const flashMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffff00, emissiveIntensity: 3.0, transparent: true, opacity: 0 });
+const flashMesh = new THREE.Mesh(new THREE.SphereGeometry(0.18, 6, 6), flashMat);
 flashMesh.position.set(0, 0, -0.65);
 gunGroup.add(flashMesh);
 let flashTimer = 0;
