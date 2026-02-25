@@ -191,9 +191,25 @@ scene.fog = new THREE.FogExp2(0xc8e8ff, 0.0025);
 const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 600);
 camera.position.set(0, PLAYER_HEIGHT, 0);
 
+// ════════════════════════════════════════════════════════════════
+//  POST-PROCESSING
+// ════════════════════════════════════════════════════════════════
+const composer = new THREE.EffectComposer(renderer);
+const renderPass = new THREE.RenderPass(scene, camera);
+composer.addPass(renderPass);
+
+const bloomPass = new THREE.UnrealBloomPass(
+  new THREE.Vector2(window.innerWidth, window.innerHeight),
+  0.55,   // strength  — lower = subtler
+  0.35,   // radius
+  0.82    // threshold — only pixels brighter than this glow
+);
+composer.addPass(bloomPass);
+
 function resize() {
   const W = window.innerWidth, H = window.innerHeight;
   renderer.setSize(W, H);
+  composer.setSize(W, H);
   hud.width  = W;
   hud.height = H;
   camera.aspect = W / H;
@@ -851,7 +867,7 @@ function loop(t) {
     updateHUD();
     updateImpacts(dt);
   }
-  renderer.render(scene, camera);
+  composer.render();
 }
 requestAnimationFrame(loop);
 
