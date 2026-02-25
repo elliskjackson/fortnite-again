@@ -45,12 +45,50 @@
     }
     #crosshair::before { width: 2px; height: 100%; left: 50%; transform: translateX(-50%); }
     #crosshair::after  { height: 2px; width: 100%; top: 50%; transform: translateY(-50%); }
+    #vignette {
+      position: fixed; top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      box-shadow: inset 0 0 120px rgba(0,0,0,0.55);
+      z-index: 2;
+    }
+    #dmgFlash {
+      position: fixed; top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      box-shadow: inset 0 0 80px rgba(255,0,0,0.0);
+      transition: box-shadow 0.05s ease-in;
+      z-index: 3;
+    }
+    #dmgFlash.hit {
+      box-shadow: inset 0 0 80px rgba(255,0,0,0.65);
+      transition: none;
+    }
+    #scopeBars {
+      position: fixed; top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      display: none;
+      z-index: 4;
+    }
+    #scopeBars::before, #scopeBars::after {
+      content: '';
+      position: absolute;
+      top: 0; bottom: 0;
+      width: 30%;
+      background: rgba(0,0,0,0.92);
+    }
+    #scopeBars::before { left: 0; }
+    #scopeBars::after  { right: 0; }
   </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <canvas id="hud"></canvas>
 <div id="crosshair"></div>
+<div id="vignette"></div>
+<div id="dmgFlash"></div>
+<div id="scopeBars"></div>
 
 <!-- MAIN MENU OVERLAY -->
 <div id="overlay">
