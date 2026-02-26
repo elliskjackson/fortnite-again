@@ -1057,7 +1057,9 @@ function spawnBots() {
     const z     = Math.sin(angle) * dist;
     const y     = getTerrainY(x, z);
 
-    const mesh = createBotMesh();
+    const outfitHue   = ((i * 137.508) % 360) / 360;
+    const outfitColor = new THREE.Color().setHSL(outfitHue, 0.65, 0.45);
+    const mesh = createBotMesh(outfitColor);
     mesh.position.set(x, y, z);
     scene.add(mesh);
 
@@ -1066,7 +1068,7 @@ function spawnBots() {
     const wKey  = wKeys[Math.floor(rng(i*4+2) * wKeys.length)];
 
     bots.push({
-      mesh, alive: true,
+      mesh, parts: mesh.userData.parts, alive: true,
       hp: 100, maxHp: 100,
       x, y, z,
       yaw: rng(i*4+3) * Math.PI * 2,
