@@ -942,36 +942,93 @@ function startGame(endless) {
 // ════════════════════════════════════════════════════════════════
 const bots = [];
 
-// Bot materials (shared base colors — each bot gets cloned materials)
-const botBodyMat = new THREE.MeshLambertMaterial({ color: 0x2244aa });
-const botHeadMat = new THREE.MeshLambertMaterial({ color: 0xffdead });
-
-function createBotMesh() {
+function createBotMesh(outfitColor) {
   const group = new THREE.Group();
-  // Body (index 0)
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.9, 0.35), botBodyMat.clone());
-  body.position.y = 0.9;
-  body.castShadow = true;
-  group.add(body);
-  // Head (index 1)
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.4, 0.4), botHeadMat.clone());
-  head.position.y = 1.6;
-  head.castShadow = true;
-  group.add(head);
-  // Arms (index 2, 3)
-  for (const side of [-1, 1]) {
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.7, 0.18), botBodyMat.clone());
-    arm.position.set(side * 0.42, 0.85, 0);
-    arm.castShadow = true;
-    group.add(arm);
+
+  // Materials — baseColor stored for hit-flash restore
+  function mat(color, roughness, metalness) {
+    const m = new THREE.MeshStandardMaterial({ color, roughness, metalness });
+    m.userData.baseColor = color instanceof THREE.Color ? color.getHex() : color;
+    return m;
   }
-  // Legs (index 4, 5)
-  for (const side of [-1, 1]) {
-    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.75, 0.22), botBodyMat.clone());
-    leg.position.set(side * 0.17, 0.3, 0);
-    leg.castShadow = true;
-    group.add(leg);
+  const outfitMat = mat(outfitColor, 0.80, 0.10);
+  const skinMat   = mat(0xffdead,   0.85, 0.00);
+  const bootMat   = mat(0x222222,   0.90, 0.10);
+  const gunMat    = mat(0x333333,   0.50, 0.60);
+
+  // Helper: create a mesh, position it, enable shadow
+  function mk(geo, material, px, py, pz) {
+    const m = new THREE.Mesh(geo, material.clone());
+    m.material.userData.baseColor = material.userData.baseColor;
+    m.position.set(px, py, pz);
+    m.castShadow = true;
+    return m;
   }
+
+  // ── Static torso parts ──────────────────────────────────────────
+  const hips  = mk(new THREE.BoxGeometry(0.38, 0.22, 0.25), outfitMat, 0, 0.91, 0);
+  const torso = mk(new THREE.BoxGeometry(0.55, 0.55, 0.28), outfitMat, 0, 1.30, 0);
+  const neck  = mk(new THREE.CylinderGeometry(0.10, 0.10, 0.15, 8), skinMat, 0, 1.65, 0);
+  group.add(hips, torso, neck);
+
+  // ── Head pivot (rotates Y for head-turn) ────────────────────────
+  const headPivot = new THREE.Group();
+  headPivot.position.set(0, 1.90, 0);
+  const head = mk(new THREE.BoxGeometry(0.38, 0.38, 0.38), skinMat, 0, 0, 0);
+  headPivot.add(head);
+  group.add(headPivot);
+
+  // ── Arms ────────────────────────────────────────────────────────
+  function makeArm(side) {
+    const pivot = new THREE.Group();
+    pivot.position.set(side * 0.37, 1.52, 0);
+    const upper = mk(new THREE.CylinderGeometry(0.09, 0.09, 0.35, 8), outfitMat, 0, -0.175, 0);
+    pivot.add(upper);
+    const forearmPivot = new THREE.Group();
+    forearmPivot.position.set(0, -0.35, 0);
+    const fore = mk(new THREE.CylinderGeometry(0.075, 0.075, 0.30, 8), skinMat, 0, -0.15, 0);
+    forearmPivot.add(fore);
+    pivot.add(forearmPivot);
+    return { pivot, forearmPivot };
+  }
+  const leftArm  = makeArm(-1);
+  const rightArm = makeArm( 1);
+  group.add(leftArm.pivot, rightArm.pivot);
+
+  // Gun on right forearm
+  const gun = mk(new THREE.BoxGeometry(0.08, 0.08, 0.35), gunMat, 0.05, -0.15, -0.22);
+  rightArm.forearmPivot.add(gun);
+
+  // ── Legs ────────────────────────────────────────────────────────
+  function makeLeg(side) {
+    const pivot = new THREE.Group();
+    pivot.position.set(side * 0.12, 0.82, 0);
+    const thigh = mk(new THREE.CylinderGeometry(0.11, 0.10, 0.38, 8), outfitMat, 0, -0.19, 0);
+    pivot.add(thigh);
+    const shinPivot = new THREE.Group();
+    shinPivot.position.set(0, -0.38, 0);
+    const shin = mk(new THREE.CylinderGeometry(0.09, 0.08, 0.36, 8), bootMat, 0, -0.18, 0);
+    shinPivot.add(shin);
+    pivot.add(shinPivot);
+    return { pivot };
+  }
+  const leftLeg  = makeLeg(-1);
+  const rightLeg = makeLeg( 1);
+  group.add(leftLeg.pivot, rightLeg.pivot);
+
+  // ── Collect all meshes (for flash / death) ──────────────────────
+  const allMeshes = [];
+  group.traverse(child => { if (child.isMesh) allMeshes.push(child); });
+
+  group.userData.parts = {
+    headPivot,
+    leftArmPivot:  leftArm.pivot,
+    rightArmPivot: rightArm.pivot,
+    leftLegPivot:  leftLeg.pivot,
+    rightLegPivot: rightLeg.pivot,
+    allMeshes
+  };
+
   return group;
 }
 
