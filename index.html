@@ -1261,9 +1261,9 @@ function updateBots(dt) {
     }
 
     // Head turn toward player (smooth lerp, clamped ±60°)
-    const pp2 = camera.position;
-    const angleToPlayer = Math.atan2(pp2.x - bot.x, pp2.z - bot.z);
-    const relAngle = ((angleToPlayer - bot.yaw + Math.PI) % (Math.PI * 2)) - Math.PI;
+    const angleToPlayer = Math.atan2(pp.x - bot.x, pp.z - bot.z);
+    const TWO_PI = Math.PI * 2;
+    const relAngle = ((angleToPlayer - bot.yaw + Math.PI) % TWO_PI + TWO_PI) % TWO_PI - Math.PI;
     const targetHeadY = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, relAngle));
     p.headPivot.rotation.y += (targetHeadY - p.headPivot.rotation.y) * Math.min(1, dt * 5);
 
