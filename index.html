@@ -1200,8 +1200,8 @@ function updateBots(dt) {
       if (bot.deathTimer > 0) {
         bot.deathTimer -= dt;
         bot.mesh.position.y -= dt * 0.5;
-        bot.mesh.children.forEach(c => {
-          if (c.material) c.material.opacity = Math.max(0, bot.deathTimer / 2);
+        bot.parts.allMeshes.forEach(m => {
+          m.material.opacity = Math.max(0, bot.deathTimer / 2);
         });
         if (bot.deathTimer <= 0) bot.mesh.visible = false;
       }
@@ -1227,10 +1227,8 @@ function updateBots(dt) {
     if (bot.hitFlash > 0) {
       bot.hitFlash -= dt;
       const flashOn = bot.hitFlash > 0;
-      bot.mesh.children.forEach((c, idx) => {
-        if (c.material) {
-          c.material.color.set(flashOn ? 0xff8800 : (idx === 1 ? 0xffdead : 0x2244aa));
-        }
+      bot.parts.allMeshes.forEach(m => {
+        m.material.color.set(flashOn ? 0xff8800 : m.material.userData.baseColor);
       });
     }
 
@@ -1353,11 +1351,11 @@ function damageBot(bot, dmg) {
 function killBot(bot) {
   bot.alive = false;
   bot.deathTimer = 2;
-  bot.mesh.children.forEach(c => {
-    if (c.material) {
-      c.material = c.material.clone();
-      c.material.transparent = true;
-    }
+  bot.parts.allMeshes.forEach(m => {
+    const baseColor = m.material.userData.baseColor;
+    m.material = m.material.clone();
+    m.material.transparent = true;
+    m.material.userData.baseColor = baseColor;
   });
   state.kills++;
   checkWinCondition();
