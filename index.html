@@ -995,9 +995,10 @@ function createBotMesh(outfitColor) {
   const rightArm = makeArm( 1);
   group.add(leftArm.pivot, rightArm.pivot);
 
-  // Gun on right forearm
-  const gun = mk(new THREE.BoxGeometry(0.08, 0.08, 0.35), gunMat, 0.05, -0.15, -0.22);
-  rightArm.forearmPivot.add(gun);
+  // Gun held in right hand (bottom of forearm = hand position)
+  const gunBarrelMesh = mk(new THREE.BoxGeometry(0.06, 0.06, 0.38), gunMat, 0, -0.30, -0.19);
+  const gunGrip = mk(new THREE.BoxGeometry(0.06, 0.14, 0.06), gunMat, 0, -0.37, -0.04);
+  rightArm.forearmPivot.add(gunBarrelMesh, gunGrip);
 
   // ── Legs ────────────────────────────────────────────────────────
   function makeLeg(side) {
