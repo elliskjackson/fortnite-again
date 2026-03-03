@@ -475,7 +475,7 @@ function addBuilding(x, z, seed) {
 
   const cLock = new THREE.Mesh(
     new THREE.BoxGeometry(0.15, 0.15, 0.05),
-    new THREE.MeshStandardMaterial({ color: 0xffd700, roughness: 0.3, metalness: 0.9 })
+    chestGoldMat
   );
   cLock.position.set(0, 0.1, 0.38);
   chestGroup.add(cLock);
@@ -492,7 +492,7 @@ function addBuilding(x, z, seed) {
   chestGroup.position.set(chestX, chestY, chestZ);
   scene.add(chestGroup);
 
-  chests.push({ mesh: chestGroup, x: chestX, y: chestY, z: chestZ, open: false });
+  chests.push({ mesh: chestGroup, x: chestX, y: chestY, z: chestZ, open: false, light: cLight });
 }
 
 function addTree(x, z, seed) {
