@@ -458,6 +458,41 @@ function addBuilding(x, z, seed) {
   const intLight = new THREE.PointLight(0xfff5e0, 0.5, w * 1.2);
   intLight.position.set(x, groundY + h * 0.6, z);
   scene.add(intLight);
+
+  // Interior chest — placed against back wall, centered
+  const chestGroup = new THREE.Group();
+  const chestGoldMat = new THREE.MeshStandardMaterial({ color: 0xf0c040, emissive: 0xf0c040, emissiveIntensity: 0.6, roughness: 0.4, metalness: 0.8 });
+  const chestDarkMat = new THREE.MeshStandardMaterial({ color: 0x8B6914, roughness: 0.7, metalness: 0.3 });
+
+  const cBody = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.8, 0.7), chestGoldMat);
+  cBody.castShadow = true;
+  chestGroup.add(cBody);
+
+  const cLid = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.3, 0.7), chestDarkMat);
+  cLid.position.y = 0.55;
+  cLid.castShadow = true;
+  chestGroup.add(cLid);
+
+  const cLock = new THREE.Mesh(
+    new THREE.BoxGeometry(0.15, 0.15, 0.05),
+    new THREE.MeshStandardMaterial({ color: 0xffd700, roughness: 0.3, metalness: 0.9 })
+  );
+  cLock.position.set(0, 0.1, 0.38);
+  chestGroup.add(cLock);
+
+  // Glow light on chest
+  const cLight = new THREE.PointLight(0xf0c040, 1.5, 8);
+  cLight.position.set(0, 1.5, 0);
+  chestGroup.add(cLight);
+
+  // Position: back wall interior face, centered on wall width, floorY + 0.4
+  const chestX = x;
+  const chestZ = backZ + doorSign * 0.8;   // 0.8 units inward from back wall
+  const chestY = groundY + 0.4;
+  chestGroup.position.set(chestX, chestY, chestZ);
+  scene.add(chestGroup);
+
+  chests.push({ mesh: chestGroup, x: chestX, y: chestY, z: chestZ, open: false });
 }
 
 function addTree(x, z, seed) {
