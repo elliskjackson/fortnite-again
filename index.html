@@ -475,11 +475,6 @@ function addBuilding(x, z, seed) {
   cLock.position.set(0, 0.1, 0.38);
   chestGroup.add(cLock);
 
-  // Glow light on chest
-  const cLight = new THREE.PointLight(0xf0c040, 1.5, 8);
-  cLight.position.set(0, 1.5, 0);
-  chestGroup.add(cLight);
-
   // Position: back wall interior face, centered on wall width, floorY + 0.4
   const chestX = x;
   const chestZ = backZ + doorSign * 0.8;   // 0.8 units inward from back wall
@@ -487,7 +482,8 @@ function addBuilding(x, z, seed) {
   chestGroup.position.set(chestX, chestY, chestZ);
   scene.add(chestGroup);
 
-  chests.push({ mesh: chestGroup, x: chestX, y: chestY, z: chestZ, open: false, light: cLight });
+  // No PointLight on interior chests — emissive material glows via bloom; lights are too expensive at scale
+  chests.push({ mesh: chestGroup, x: chestX, y: chestY, z: chestZ, open: false, light: null });
 }
 
 function addTree(x, z, seed) {
@@ -681,8 +677,7 @@ function openChest(chest) {
   chest.open = true;
   // Animate lid open
   chest.mesh.children[1].rotation.x = -Math.PI * 0.6;
-  chest.light.color.set(0xffffff);
-  chest.light.intensity = 6;
+  if (chest.light) { chest.light.color.set(0xffffff); chest.light.intensity = 6; }
 
   // Give player a random weapon (not pistol as starter)
   const keys = ['rifle','shotgun','sniper','smg'];
@@ -1029,8 +1024,7 @@ function startGame(endless) {
   chests.forEach(c => {
     c.open = false;
     c.mesh.children[1].rotation.x = 0;
-    c.light.color.set(0xf0c040);
-    c.light.intensity = 1.5;
+    if (c.light) { c.light.color.set(0xf0c040); c.light.intensity = 1.5; }
   });
 
   // Hide overlay, request pointer lock
