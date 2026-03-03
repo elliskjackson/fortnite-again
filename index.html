@@ -345,6 +345,7 @@ terrainMesh.updateMatrixWorld(true);
 //  ENVIRONMENT OBJECTS
 // ════════════════════════════════════════════════════════════════
 const envObjects = [];   // used for collision
+const chests = [];
 
 function seededRand(seed) {
   let x = Math.sin(seed + 1) * 10000;
@@ -362,28 +363,101 @@ function addBuilding(x, z, seed) {
   const w = 6 + seededRand(seed)   * 10;
   const h = 4 + seededRand(seed+1) * 12;
   const d = 6 + seededRand(seed+2) * 10;
-  const geo = new THREE.BoxGeometry(w, h, d);
-  const mat = new THREE.MeshStandardMaterial({
-    color: new THREE.Color().setHSL(0.08 + seededRand(seed+3)*0.05, 0.12, 0.48 + seededRand(seed+4)*0.15),
-    map: concreteTex,
-    roughness: 0.85,
-    metalness: 0.05
-  });
-  const mesh = new THREE.Mesh(geo, mat);
-  const y = placeOnTerrain(x, z);
-  mesh.position.set(x, y + h/2, z);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  scene.add(mesh);
-  envObjects.push({ x, z, w: w/2 + 0.5, d: d/2 + 0.5 });
+  const groundY = placeOnTerrain(x, z);
+
+  // Material — exterior hue
+  const hue = 0.08 + seededRand(seed+3) * 0.05;
+  const lightness = 0.48 + seededRand(seed+4) * 0.15;
+  const exteriorColor = new THREE.Color().setHSL(hue, 0.12, lightness);
+  const interiorColor = new THREE.Color().setHSL(hue, 0.12, Math.min(1, lightness + 0.08));
+  function wallMat(isInterior) {
+    return new THREE.MeshStandardMaterial({
+      color: isInterior ? interiorColor : exteriorColor,
+      map: concreteTex,
+      roughness: 0.85,
+      metalness: 0.05
+    });
+  }
+
+  // Door dimensions and side
+  const doorW = 1.4;
+  const doorH = 2.4;
+  const doorSideW = (w - doorW) / 2;
+  // seededRand(seed+7) > 0.5 → door on +Z side, else -Z side
+  const doorSign = seededRand(seed+7) > 0.5 ? 1 : -1;
+  const frontZ = z + doorSign * (d / 2);
+  const backZ  = z - doorSign * (d / 2);
+
+  // Helper: add a wall panel, cast shadow, add to scene
+  function addPanel(geo, px, py, pz, isInterior) {
+    const m = new THREE.Mesh(geo, wallMat(isInterior));
+    m.position.set(px, py, pz);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    scene.add(m);
+  }
+
+  const wallThick = 0.3;
+  const midY = groundY + h / 2;   // vertical center of walls
+
+  // Left wall
+  addPanel(new THREE.BoxGeometry(wallThick, h, d), x - w/2, midY, z, false);
+  envObjects.push({ x: x - w/2, z, w: wallThick/2, d: d/2 });
+
+  // Right wall
+  addPanel(new THREE.BoxGeometry(wallThick, h, d), x + w/2, midY, z, false);
+  envObjects.push({ x: x + w/2, z, w: wallThick/2, d: d/2 });
+
+  // Back wall (full, no door)
+  addPanel(new THREE.BoxGeometry(w, h, wallThick), x, midY, backZ, false);
+  envObjects.push({ x, z: backZ, w: w/2, d: wallThick/2 });
+
+  // Front wall — top beam (above door gap)
+  const beamH = h - doorH;
+  addPanel(
+    new THREE.BoxGeometry(w, beamH, wallThick),
+    x,
+    groundY + doorH + beamH / 2,
+    frontZ,
+    false
+  );
+  envObjects.push({ x, z: frontZ, w: w/2, d: wallThick/2 });
+
+  // Front wall — left pier
+  addPanel(
+    new THREE.BoxGeometry(doorSideW, doorH, wallThick),
+    x - doorW/2 - doorSideW/2,
+    groundY + doorH / 2,
+    frontZ,
+    false
+  );
+  envObjects.push({ x: x - doorW/2 - doorSideW/2, z: frontZ, w: doorSideW/2, d: wallThick/2 });
+
+  // Front wall — right pier
+  addPanel(
+    new THREE.BoxGeometry(doorSideW, doorH, wallThick),
+    x + doorW/2 + doorSideW/2,
+    groundY + doorH / 2,
+    frontZ,
+    false
+  );
+  envObjects.push({ x: x + doorW/2 + doorSideW/2, z: frontZ, w: doorSideW/2, d: wallThick/2 });
+
+  // Floor (slightly above terrain, inset from walls)
+  addPanel(new THREE.BoxGeometry(w - 0.6, 0.2, d - 0.6), x, groundY + 0.1, z, true);
+  // floor gets no envObjects entry (player already snaps to terrain Y)
 
   // Roof detail
   const roofGeo = new THREE.BoxGeometry(w + 0.5, 0.4, d + 0.5);
-  const roofMat = new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.9, metalness: 0.1 });
-  const roof = new THREE.Mesh(roofGeo, roofMat);
-  roof.position.set(x, y + h + 0.2, z);
+  const roof = new THREE.Mesh(roofGeo, new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.9, metalness: 0.1 }));
+  roof.position.set(x, groundY + h + 0.2, z);
   roof.castShadow = true;
   scene.add(roof);
+
+  // Interior ambient light — warm dim glow
+  const intLight = new THREE.PointLight(0xfff5e0, 0.5, w * 1.2);
+  intLight.position.set(x, groundY + h * 0.6, z);
+  scene.add(intLight);
 }
 
 function addTree(x, z, seed) {
@@ -459,8 +533,6 @@ function addRock(x, z, seed) {
 // ════════════════════════════════════════════════════════════════
 //  CHESTS
 // ════════════════════════════════════════════════════════════════
-const chests = [];
-
 (function spawnChests() {
   const rng = (i) => seededRand(i * 73.1 + 99);
   const goldMat  = new THREE.MeshStandardMaterial({ color: 0xf0c040, emissive: 0xf0c040, emissiveIntensity: 0.6, roughness: 0.4, metalness: 0.8 });
