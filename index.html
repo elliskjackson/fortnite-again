@@ -421,7 +421,7 @@ function addBuilding(x, z, seed) {
     frontZ,
     false
   );
-  envObjects.push({ x, z: frontZ, w: w/2, d: wallThick/2 });
+  // Top beam has no envObjects entry — the two piers below cover the solid parts at player height
 
   // Front wall — left pier
   addPanel(
