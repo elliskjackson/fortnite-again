@@ -454,11 +454,6 @@ function addBuilding(x, z, seed) {
   roof.castShadow = true;
   scene.add(roof);
 
-  // Interior ambient light — warm dim glow
-  const intLight = new THREE.PointLight(0xfff5e0, 0.5, w * 1.2);
-  intLight.position.set(x, groundY + h * 0.6, z);
-  scene.add(intLight);
-
   // Interior chest — placed against back wall, centered
   const chestGroup = new THREE.Group();
   const chestGoldMat = new THREE.MeshStandardMaterial({ color: 0xf0c040, emissive: 0xf0c040, emissiveIntensity: 0.6, roughness: 0.4, metalness: 0.8 });
