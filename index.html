@@ -241,8 +241,6 @@ function buildReverseBinds() {
 }
 let reverseBinds = buildReverseBinds();
 
-function isAction(action) { return !!keys[settings.binds[action]]; }
-
 (function initSettingsUI() {
   const overlay  = document.getElementById('settingsOverlay');
   const tabs     = document.querySelectorAll('.settingsTab');
@@ -292,7 +290,6 @@ function isAction(action) { return !!keys[settings.binds[action]]; }
   document.addEventListener('keydown', e => {
     if (!listeningBtn) return;
     e.preventDefault();
-    e.stopPropagation();
     settings.binds[listeningBtn.dataset.action] = e.code;
     reverseBinds = buildReverseBinds();
     listeningBtn.classList.remove('listening');
@@ -1160,6 +1157,8 @@ let isZoomed = false;
 const keys = {};
 document.addEventListener('keydown', e => { keys[e.code] = true; });
 document.addEventListener('keyup',   e => { keys[e.code] = false; });
+// isAction declared here so it's after the keys object it depends on
+function isAction(action) { return !!keys[settings.binds[action]]; }
 
 document.addEventListener('keydown', e => {
   if (e.code === 'KeyE' && state.phase === 'playing') checkChestInteract();
