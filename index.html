@@ -747,7 +747,11 @@ function buildEditPanels(piece) {
 }
 
 function clearEditPanels() {
-  editPanels.forEach(m => scene.remove(m));
+  editPanels.forEach(m => {
+    m.geometry.dispose();
+    m.material.dispose();
+    scene.remove(m);
+  });
   editPanels = [];
 }
 
@@ -793,8 +797,44 @@ function applyEdit() {
         editPiece.envObjs.push(obj);
       }
     }
+  } else {
+    // floor/ramp/cone: replace mesh with Group of non-removed sub-panels
+    const presets2 = getPresets(editPiece.type);
+    const removed2 = new Set(presets2[editPreset].remove);
+    scene.remove(editPiece.mesh);
+    const group2 = new THREE.Group();
+    group2.position.copy(editPiece.mesh.position);
+    group2.rotation.copy(editPiece.mesh.rotation);
+    const baseMat2 = pieceMat(editPiece.mat, 1);
+
+    if (editPiece.type === 'floor') {
+      [[-1,0,-1],[1,0,-1],[-1,0,1],[1,0,1]].forEach(([ox,oy,oz], i) => {
+        if (removed2.has(i)) return;
+        const m = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.3, 1.95), baseMat2.clone());
+        m.position.set(ox, oy, oz);
+        m.castShadow = true;
+        group2.add(m);
+      });
+    } else if (editPiece.type === 'ramp') {
+      [[-1,2,-1],[1,2,-1],[-1,0,1],[1,0,1]].forEach(([ox,oy,oz], i) => {
+        if (removed2.has(i)) return;
+        const m = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.3, 1.95), baseMat2.clone());
+        m.position.set(ox, oy, oz);
+        m.castShadow = true;
+        group2.add(m);
+      });
+    } else { // cone
+      [[-1,1,1],[1,1,1],[-1,1,-1],[1,1,-1]].forEach(([ox,oy,oz], i) => {
+        if (removed2.has(i)) return;
+        const m = new THREE.Mesh(new THREE.BoxGeometry(1.95, 1.95, 1.95), baseMat2.clone());
+        m.position.set(ox, oy, oz);
+        m.castShadow = true;
+        group2.add(m);
+      });
+    }
+    scene.add(group2);
+    editPiece.mesh = group2;
   }
-  // floor/ramp/cone: just remove the visualized panels (collision footprint unchanged)
 
   clearEditPanels();
   editMode  = false;
@@ -1538,6 +1578,7 @@ document.addEventListener('keydown', e => {
 document.addEventListener('keydown', e => {
   if (state.phase !== 'playing' || settingsOpen) return;
   if (e.code === settings.binds.build) {
+    if (editMode) return;
     buildMode = !buildMode;
     if (buildMode) rebuildGhost();
     else if (ghostMesh) ghostMesh.visible = false;
