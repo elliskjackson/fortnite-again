@@ -81,6 +81,46 @@
     }
     #scopeBars::before { left: 0; }
     #scopeBars::after  { right: 0; }
+
+    /* ── Settings overlay ── */
+    #settingsOverlay {
+      position: fixed; top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: rgba(0,0,0,0.88);
+      display: none; flex-direction: column;
+      align-items: center; justify-content: flex-start;
+      padding-top: 40px;
+      color: #fff; font-family: 'Segoe UI', sans-serif;
+      z-index: 20; overflow-y: auto;
+    }
+    #settingsOverlay h2 { font-size: 2em; color: #f0c040; margin-bottom: 20px; }
+    .settingsTabs { display: flex; gap: 10px; margin-bottom: 24px; }
+    .settingsTab {
+      padding: 8px 22px; background: #333; border: none;
+      color: #ccc; border-radius: 6px; cursor: pointer; font-size: 1em;
+    }
+    .settingsTab.active { background: #f0c040; color: #111; font-weight: bold; }
+    .settingsPanel { display: none; width: 480px; }
+    .settingsPanel.active { display: block; }
+    .settingsRow {
+      display: flex; justify-content: space-between;
+      align-items: center; padding: 10px 0;
+      border-bottom: 1px solid #333;
+    }
+    .settingsRow label { font-size: 0.95em; color: #ccc; }
+    .settingsRow input[type=range] { width: 180px; accent-color: #f0c040; }
+    .bindBtn {
+      padding: 5px 14px; background: #444; border: 1px solid #666;
+      color: #fff; border-radius: 4px; cursor: pointer; font-size: 0.9em;
+      min-width: 80px; text-align: center;
+    }
+    .bindBtn.listening { background: #f0c040; color: #111; }
+    .bindBtn.conflict  { border-color: #ff4444; color: #ff4444; }
+    #settingsClose {
+      margin-top: 28px; padding: 8px 32px;
+      background: #f0c040; color: #111; border: none;
+      border-radius: 6px; cursor: pointer; font-size: 1em; font-weight: bold;
+    }
   </style>
 </head>
 <body>
@@ -90,6 +130,53 @@
 <div id="vignette"></div>
 <div id="dmgFlash"></div>
 <div id="scopeBars"></div>
+
+<!-- SETTINGS OVERLAY -->
+<div id="settingsOverlay">
+  <h2>SETTINGS</h2>
+  <div class="settingsTabs">
+    <button class="settingsTab active" data-tab="controls">Controls</button>
+    <button class="settingsTab" data-tab="mouse">Mouse</button>
+    <button class="settingsTab" data-tab="graphics">Graphics</button>
+  </div>
+
+  <!-- Controls tab -->
+  <div class="settingsPanel active" id="tab-controls">
+    <div class="settingsRow"><label>Move Forward</label>   <button class="bindBtn" data-action="forward"></button></div>
+    <div class="settingsRow"><label>Move Back</label>      <button class="bindBtn" data-action="back"></button></div>
+    <div class="settingsRow"><label>Move Left</label>      <button class="bindBtn" data-action="left"></button></div>
+    <div class="settingsRow"><label>Move Right</label>     <button class="bindBtn" data-action="right"></button></div>
+    <div class="settingsRow"><label>Jump</label>           <button class="bindBtn" data-action="jump"></button></div>
+    <div class="settingsRow"><label>Crouch</label>         <button class="bindBtn" data-action="crouch"></button></div>
+    <div class="settingsRow"><label>Build Mode</label>     <button class="bindBtn" data-action="build"></button></div>
+    <div class="settingsRow"><label>Edit Mode</label>      <button class="bindBtn" data-action="edit"></button></div>
+    <div class="settingsRow"><label>Reload</label>         <button class="bindBtn" data-action="reload"></button></div>
+    <div class="settingsRow"><label>Place Wall</label>     <button class="bindBtn" data-action="pieceWall"></button></div>
+    <div class="settingsRow"><label>Place Floor</label>    <button class="bindBtn" data-action="pieceFloor"></button></div>
+    <div class="settingsRow"><label>Place Ramp</label>     <button class="bindBtn" data-action="pieceRamp"></button></div>
+    <div class="settingsRow"><label>Place Cone</label>     <button class="bindBtn" data-action="pieceCone"></button></div>
+  </div>
+
+  <!-- Mouse tab -->
+  <div class="settingsPanel" id="tab-mouse">
+    <div class="settingsRow">
+      <label>Look Sensitivity</label>
+      <input type="range" id="sensitivitySlider" min="0.1" max="3.0" step="0.05" value="1.0">
+      <span id="sensitivityVal">1.00×</span>
+    </div>
+  </div>
+
+  <!-- Graphics tab -->
+  <div class="settingsPanel" id="tab-graphics">
+    <div class="settingsRow">
+      <label>Bloom Intensity</label>
+      <input type="range" id="bloomSlider" min="0" max="2.0" step="0.05" value="1.0">
+      <span id="bloomVal">1.00</span>
+    </div>
+  </div>
+
+  <button id="settingsClose">CLOSE</button>
+</div>
 
 <!-- MAIN MENU OVERLAY -->
 <div id="overlay">
@@ -110,6 +197,145 @@
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
 <script>
 'use strict';
+
+// ════════════════════════════════════════════════════════════════
+//  SETTINGS
+// ════════════════════════════════════════════════════════════════
+const DEFAULT_BINDS = {
+  forward:    'KeyW',
+  back:       'KeyS',
+  left:       'KeyA',
+  right:      'KeyD',
+  jump:       'Space',
+  crouch:     'KeyC',
+  build:      'KeyQ',
+  edit:       'KeyG',
+  reload:     'KeyR',
+  pieceWall:  'KeyZ',
+  pieceFloor: 'KeyX',
+  pieceRamp:  'KeyV',
+  pieceCone:  'KeyF',
+};
+
+const settings = (() => {
+  const saved = JSON.parse(localStorage.getItem('brSettings') || '{}');
+  return {
+    sensitivity: saved.sensitivity ?? 1.0,
+    bloom:       saved.bloom       ?? 1.0,
+    binds:       Object.assign({}, DEFAULT_BINDS, saved.binds || {}),
+  };
+})();
+
+function saveSettings() {
+  localStorage.setItem('brSettings', JSON.stringify({
+    sensitivity: settings.sensitivity,
+    bloom:       settings.bloom,
+    binds:       settings.binds,
+  }));
+}
+
+function buildReverseBinds() {
+  const r = {};
+  for (const [action, code] of Object.entries(settings.binds)) r[code] = action;
+  return r;
+}
+let reverseBinds = buildReverseBinds();
+
+function isAction(action) { return !!keys[settings.binds[action]]; }
+
+(function initSettingsUI() {
+  const overlay  = document.getElementById('settingsOverlay');
+  const tabs     = document.querySelectorAll('.settingsTab');
+  const panels   = document.querySelectorAll('.settingsPanel');
+  const bindBtns = document.querySelectorAll('.bindBtn');
+
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      panels.forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+    });
+  });
+
+  function codeToLabel(code) {
+    if (!code) return '?';
+    return code.replace('Key','').replace('Digit','#').replace('Space','SPC')
+               .replace('ArrowUp','↑').replace('ArrowDown','↓')
+               .replace('ArrowLeft','←').replace('ArrowRight','→');
+  }
+
+  function refreshBindBtns() {
+    bindBtns.forEach(btn => {
+      const action = btn.dataset.action;
+      const code   = settings.binds[action];
+      btn.textContent = codeToLabel(code);
+      const conflicts = Object.entries(settings.binds).filter(([a,c]) => c === code && a !== action);
+      btn.classList.toggle('conflict', conflicts.length > 0);
+    });
+  }
+  refreshBindBtns();
+
+  let listeningBtn = null;
+  bindBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (listeningBtn) {
+        listeningBtn.classList.remove('listening');
+        listeningBtn.textContent = codeToLabel(settings.binds[listeningBtn.dataset.action]);
+      }
+      listeningBtn = btn;
+      btn.classList.add('listening');
+      btn.textContent = '…';
+    });
+  });
+
+  document.addEventListener('keydown', e => {
+    if (!listeningBtn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    settings.binds[listeningBtn.dataset.action] = e.code;
+    reverseBinds = buildReverseBinds();
+    listeningBtn.classList.remove('listening');
+    listeningBtn = null;
+    refreshBindBtns();
+    saveSettings();
+  }, { capture: true });
+
+  const senSlider = document.getElementById('sensitivitySlider');
+  const senVal    = document.getElementById('sensitivityVal');
+  senSlider.value = settings.sensitivity;
+  senVal.textContent = settings.sensitivity.toFixed(2) + '×';
+  senSlider.addEventListener('input', () => {
+    settings.sensitivity = parseFloat(senSlider.value);
+    senVal.textContent = settings.sensitivity.toFixed(2) + '×';
+    saveSettings();
+  });
+
+  const bloomSlider = document.getElementById('bloomSlider');
+  const bloomVal    = document.getElementById('bloomVal');
+  bloomSlider.value = settings.bloom;
+  bloomVal.textContent = settings.bloom.toFixed(2);
+  bloomSlider.addEventListener('input', () => {
+    settings.bloom = parseFloat(bloomSlider.value);
+    bloomVal.textContent = settings.bloom.toFixed(2);
+    if (typeof bloomPass !== 'undefined') bloomPass.strength = settings.bloom;
+    saveSettings();
+  });
+
+  document.getElementById('settingsClose').addEventListener('click', closeSettings);
+})();
+
+let settingsOpen = false;
+function openSettings() {
+  settingsOpen = true;
+  document.getElementById('settingsOverlay').style.display = 'flex';
+  document.exitPointerLock();
+}
+function closeSettings() {
+  settingsOpen = false;
+  document.getElementById('settingsOverlay').style.display = 'none';
+  if (typeof state !== 'undefined' && state.phase === 'playing') canvas.requestPointerLock();
+}
 
 // ════════════════════════════════════════════════════════════════
 //  CONSTANTS & CONFIG
@@ -205,6 +431,7 @@ const bloomPass = new THREE.UnrealBloomPass(
   0.82    // threshold — only pixels brighter than this glow
 );
 composer.addPass(bloomPass);
+bloomPass.strength = settings.bloom;
 
 function resize() {
   const W = window.innerWidth, H = window.innerHeight;
@@ -939,6 +1166,13 @@ document.addEventListener('keydown', e => {
 });
 
 document.addEventListener('keydown', e => {
+  if (e.code === 'Escape') {
+    if (settingsOpen) { closeSettings(); return; }
+    if (typeof state !== 'undefined' && state.phase === 'playing') openSettings();
+  }
+});
+
+document.addEventListener('keydown', e => {
   if (state.phase !== 'playing') return;
   const wMap = { Digit1:'pistol', Digit2:'rifle', Digit3:'shotgun', Digit4:'sniper', Digit5:'smg' };
   if (wMap[e.code] && player.inventory[wMap[e.code]]) {
@@ -950,8 +1184,8 @@ document.addEventListener('keydown', e => {
 // Mouse look
 document.addEventListener('mousemove', e => {
   if (state.phase !== 'playing') return;
-  player.yaw   -= e.movementX * 0.002;
-  player.pitch -= e.movementY * 0.002;
+  player.yaw   -= e.movementX * 0.002 * settings.sensitivity;
+  player.pitch -= e.movementY * 0.002 * settings.sensitivity;
   player.pitch  = Math.max(-Math.PI/2.2, Math.min(Math.PI/2.2, player.pitch));
 });
 
@@ -1232,7 +1466,7 @@ function updatePlayer(dt) {
   camera.rotation.x = player.pitch;
 
   // Crouch
-  player.crouching = !!keys['KeyC'];
+  player.crouching = isAction('crouch');
   const speed = player.crouching ? PLAYER_SPEED * 0.5 : PLAYER_SPEED;
   const height = player.crouching ? PLAYER_HEIGHT * 0.6 : PLAYER_HEIGHT;
 
@@ -1240,10 +1474,10 @@ function updatePlayer(dt) {
   const forward = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
   const right   = new THREE.Vector3( Math.cos(player.yaw), 0, -Math.sin(player.yaw));
   const move    = new THREE.Vector3();
-  if (keys['KeyW']) move.addScaledVector(forward,  1);
-  if (keys['KeyS']) move.addScaledVector(forward, -1);
-  if (keys['KeyA']) move.addScaledVector(right,   -1);
-  if (keys['KeyD']) move.addScaledVector(right,    1);
+  if (isAction('forward')) move.addScaledVector(forward,  1);
+  if (isAction('back'))    move.addScaledVector(forward, -1);
+  if (isAction('left'))    move.addScaledVector(right,   -1);
+  if (isAction('right'))   move.addScaledVector(right,    1);
   if (move.lengthSq() > 0) move.normalize().multiplyScalar(speed * dt);
 
   // Apply horizontal movement with wall collision
@@ -1252,7 +1486,7 @@ function updatePlayer(dt) {
   if (!checkWallCollision(camera.position.x, next.z)) camera.position.z = next.z;
 
   // Gravity & jump
-  if (player.onGround && keys['Space']) {
+  if (player.onGround && isAction('jump')) {
     player.velY = JUMP_FORCE;
     player.onGround = false;
   }
