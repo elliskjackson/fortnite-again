@@ -1347,7 +1347,7 @@ document.addEventListener('keydown', e => {
 
 // Scroll: cycle piece type in build mode
 canvas.addEventListener('wheel', e => {
-  if (!buildMode || state.phase !== 'playing') return;
+  if (!buildMode || state.phase !== 'playing' || settingsOpen) return;
   const dir = e.deltaY > 0 ? 1 : -1;
   const idx = (PIECE_TYPES.indexOf(buildType) + dir + PIECE_TYPES.length) % PIECE_TYPES.length;
   buildType = PIECE_TYPES[idx];
@@ -1411,7 +1411,7 @@ document.addEventListener('mouseup', e => {
 });
 // Right-click: rotate ghost 90° in build mode, otherwise suppress context menu
 document.addEventListener('contextmenu', e => {
-  if (buildMode && state.phase === 'playing') {
+  if (buildMode && state.phase === 'playing' && !settingsOpen) {
     e.preventDefault();
     buildRot = (buildRot + 1) % 4;
   } else {
