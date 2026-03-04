@@ -571,6 +571,152 @@ terrainMesh.updateMatrixWorld(true);
 const envObjects = [];   // used for collision
 const chests = [];
 
+// ════════════════════════════════════════════════════════════════
+//  BUILDING SYSTEM
+// ════════════════════════════════════════════════════════════════
+const GRID = 4;
+const PIECE_TYPES = ['wall', 'floor', 'ramp', 'cone'];
+
+const MATERIALS_DEF = {
+  wood:  { color: 0x8B5E3C, hp: 150, roughness: 0.90, metalness: 0.0 },
+  stone: { color: 0x888888, hp: 300, roughness: 0.85, metalness: 0.05 },
+  metal: { color: 0x7a8a9a, hp: 450, roughness: 0.40, metalness: 0.6  },
+};
+
+function snapGrid(v) { return Math.round(v / GRID) * GRID; }
+
+function createRampGeo() {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+    -2,0, 2,   2,0, 2,   2,0,-2,  -2,0,-2,
+    -2,4,-2,   2,4,-2,
+  ]), 3));
+  g.setIndex([0,2,1, 0,3,2, 0,1,5, 0,5,4, 3,4,5, 3,5,2, 0,4,3, 1,2,5]);
+  g.computeVertexNormals();
+  return g;
+}
+
+function createConeGeo() {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
+    -2,0, 2,   2,0, 2,   2,0,-2,  -2,0,-2,
+     0,4, 0,
+  ]), 3));
+  g.setIndex([0,2,1, 0,3,2, 0,1,4, 1,2,4, 2,3,4, 3,0,4]);
+  g.computeVertexNormals();
+  return g;
+}
+
+function getPieceGeo(type) {
+  switch(type) {
+    case 'wall':  return new THREE.BoxGeometry(4, 4, 0.3);
+    case 'floor': return new THREE.BoxGeometry(4, 0.3, 4);
+    case 'ramp':  return createRampGeo();
+    case 'cone':  return createConeGeo();
+  }
+}
+
+function pieceMat(matName, opacity) {
+  const def = MATERIALS_DEF[matName];
+  const m = new THREE.MeshStandardMaterial({
+    color: def.color, roughness: def.roughness, metalness: def.metalness,
+    transparent: opacity < 1, opacity: opacity ?? 1,
+  });
+  return m;
+}
+
+// Build mode state
+let buildMode    = false;
+let buildType    = 'wall';
+let buildMat     = 'wood';
+let buildRot     = 0;
+const placedPieces = [];
+
+// Ghost mesh
+let ghostMesh = null;
+function rebuildGhost() {
+  if (ghostMesh) scene.remove(ghostMesh);
+  ghostMesh = new THREE.Mesh(getPieceGeo(buildType), pieceMat(buildMat, 0.45));
+  ghostMesh.visible = false;
+  scene.add(ghostMesh);
+}
+
+function updateGhost() {
+  if (!buildMode || !ghostMesh) { if (ghostMesh) ghostMesh.visible = false; return; }
+
+  const ray = new THREE.Raycaster();
+  ray.setFromCamera(new THREE.Vector2(0, 0), camera);
+
+  const targets = [terrainMesh, ...placedPieces.map(p => p.mesh)];
+  const hits = ray.intersectObjects(targets, true);
+
+  if (!hits.length || hits[0].distance > 10) { ghostMesh.visible = false; return; }
+
+  const hit = hits[0];
+  let gx, gy, gz, ry = 0;
+
+  if (buildType === 'wall') {
+    const nx = Math.abs(hit.normal.x), nz = Math.abs(hit.normal.z);
+    if (nx > nz) {
+      gx = snapGrid(hit.point.x + hit.normal.x * 0.15);
+      gz = snapGrid(hit.point.z);
+      ry = Math.PI / 2;
+    } else {
+      gx = snapGrid(hit.point.x);
+      gz = snapGrid(hit.point.z + hit.normal.z * 0.15);
+      ry = 0;
+    }
+    gy = snapGrid(hit.point.y - 2) + 2;
+  } else if (buildType === 'floor') {
+    gx = snapGrid(hit.point.x);
+    gz = snapGrid(hit.point.z);
+    gy = snapGrid(hit.point.y) + 0.15;
+    ry = 0;
+  } else {
+    gx = snapGrid(hit.point.x);
+    gz = snapGrid(hit.point.z);
+    gy = snapGrid(hit.point.y);
+    ry = Math.round(player.yaw / (Math.PI/2)) * (Math.PI/2);
+  }
+
+  ry += buildRot * (Math.PI / 2);
+
+  ghostMesh.position.set(gx, gy, gz);
+  ghostMesh.rotation.y = ry;
+  ghostMesh.visible = true;
+}
+
+function placePiece() {
+  if (!buildMode || !ghostMesh || !ghostMesh.visible) return;
+
+  const mesh = new THREE.Mesh(getPieceGeo(buildType), pieceMat(buildMat, 1));
+  mesh.position.copy(ghostMesh.position);
+  mesh.rotation.copy(ghostMesh.rotation);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
+
+  const bx = mesh.position.x, bz = mesh.position.z;
+  const isXFacing = Math.abs(Math.sin(mesh.rotation.y)) > 0.7;
+  const envObj = buildType === 'wall'
+    ? (isXFacing
+        ? { x: bx, z: bz, w: 0.25, d: 2.15 }
+        : { x: bx, z: bz, w: 2.15, d: 0.25 })
+    : { x: bx, z: bz, w: 2.1, d: 2.1 };
+
+  envObjects.push(envObj);
+
+  placedPieces.push({
+    mesh,
+    hp: MATERIALS_DEF[buildMat].hp,
+    maxHp: MATERIALS_DEF[buildMat].hp,
+    type: buildType,
+    mat: buildMat,
+    envObjs: [envObj],
+    rotation: mesh.rotation.y,
+  });
+}
+
 function seededRand(seed) {
   let x = Math.sin(seed + 1) * 10000;
   return x - Math.floor(x);
@@ -1180,6 +1326,40 @@ document.addEventListener('keydown', e => {
   }
 });
 
+// Build mode toggle and piece selection
+document.addEventListener('keydown', e => {
+  if (state.phase !== 'playing' || settingsOpen) return;
+  if (e.code === settings.binds.build) {
+    buildMode = !buildMode;
+    if (buildMode) rebuildGhost();
+    else if (ghostMesh) ghostMesh.visible = false;
+    return;
+  }
+  if (!buildMode) return;
+  if (e.code === settings.binds.pieceWall)  { buildType = 'wall';  rebuildGhost(); }
+  if (e.code === settings.binds.pieceFloor) { buildType = 'floor'; rebuildGhost(); }
+  if (e.code === settings.binds.pieceRamp)  { buildType = 'ramp';  rebuildGhost(); }
+  if (e.code === settings.binds.pieceCone)  { buildType = 'cone';  rebuildGhost(); }
+  if (e.code === 'Digit1') { buildMat = 'wood';  rebuildGhost(); }
+  if (e.code === 'Digit2') { buildMat = 'stone'; rebuildGhost(); }
+  if (e.code === 'Digit3') { buildMat = 'metal'; rebuildGhost(); }
+});
+
+// Scroll: cycle piece type in build mode
+canvas.addEventListener('wheel', e => {
+  if (!buildMode || state.phase !== 'playing') return;
+  const dir = e.deltaY > 0 ? 1 : -1;
+  const idx = (PIECE_TYPES.indexOf(buildType) + dir + PIECE_TYPES.length) % PIECE_TYPES.length;
+  buildType = PIECE_TYPES[idx];
+  rebuildGhost();
+}, { passive: true });
+
+// Left-click: place piece (must be on canvas, before shoot fires)
+canvas.addEventListener('mousedown', e => {
+  if (state.phase !== 'playing' || settingsOpen) return;
+  if (buildMode && e.button === 0) { e.stopImmediatePropagation(); placePiece(); }
+});
+
 // Mouse look
 document.addEventListener('mousemove', e => {
   if (state.phase !== 'playing') return;
@@ -1201,6 +1381,7 @@ document.addEventListener('pointerlockchange', () => {
 document.addEventListener('mousedown', e => {
   if (e.button === 0 && state.phase === 'playing' &&
       document.pointerLockElement === canvas) {
+    if (buildMode) return;
     shoot();
   }
 });
@@ -1228,7 +1409,15 @@ document.addEventListener('mouseup', e => {
     }
   }
 });
-document.addEventListener('contextmenu', e => e.preventDefault());
+// Right-click: rotate ghost 90° in build mode, otherwise suppress context menu
+document.addEventListener('contextmenu', e => {
+  if (buildMode && state.phase === 'playing') {
+    e.preventDefault();
+    buildRot = (buildRot + 1) % 4;
+  } else {
+    e.preventDefault();
+  }
+});
 
 function startGame(endless) {
   state.endless = endless;
@@ -1448,6 +1637,7 @@ function loop(t) {
     updateClouds(dt);
     updateDust(dt);
     updateLightning(dt);
+    if (buildMode) updateGhost();
   }
   composer.render();
 }
