@@ -835,6 +835,14 @@ function applyEdit() {
     }
     scene.add(group2);
     editPiece.mesh = group2;
+
+    // Update collision: remove old envObjs from envObjects
+    editPiece.envObjs.forEach(o => {
+      const idx = envObjects.indexOf(o);
+      if (idx !== -1) envObjects.splice(idx, 1);
+    });
+    editPiece.envObjs = [];
+    // For floor/ramp/cone, the collision footprint is cleared (sub-panel pieces are walk-throughable)
   }
 
   clearEditPanels();
@@ -1569,7 +1577,7 @@ document.addEventListener('keydown', e => {
 document.addEventListener('keydown', e => {
   if (state.phase !== 'playing') return;
   const wMap = { Digit1:'pistol', Digit2:'rifle', Digit3:'shotgun', Digit4:'sniper', Digit5:'smg' };
-  if (wMap[e.code] && player.inventory[wMap[e.code]]) {
+  if (wMap[e.code] && !buildMode && !editMode && player.inventory[wMap[e.code]]) {
     player.weapon = wMap[e.code];
     updateGunVisual();
   }
@@ -1712,6 +1720,21 @@ function startGame(endless) {
   if (endless) {
     state.endlessLevel++;
   }
+
+  // Reset building / loot state from previous round
+  for (const pp of placedPieces) {
+    scene.remove(pp.mesh);
+    pp.envObjs.forEach(o => {
+      const idx = envObjects.indexOf(o);
+      if (idx !== -1) envObjects.splice(idx, 1);
+    });
+  }
+  placedPieces.length = 0;
+  for (const ww of worldWeapons) scene.remove(ww.mesh);
+  worldWeapons.length = 0;
+  buildMode = false;
+  if (ghostMesh) ghostMesh.visible = false;
+  cancelEdit();
 
   // Reset player
   player.hp          = 100;
