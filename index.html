@@ -1142,6 +1142,31 @@ function shoot() {
     dir.applyQuaternion(camera.quaternion);
 
     const ray = new THREE.Raycaster(camera.position.clone(), dir, 0.1, WEAPONS[player.weapon].range);
+    // Check placed pieces first
+    if (placedPieces.length > 0) {
+      const pieceMeshes = placedPieces.map(p => p.mesh);
+      const pieceHits = ray.intersectObjects(pieceMeshes, true);
+      if (pieceHits.length > 0) {
+        // Find the placedPiece entry for the hit mesh
+        const hitMesh = pieceHits[0].object;
+        const hitPiece = placedPieces.find(p => {
+          let found = false;
+          p.mesh.traverse(c => { if (c === hitMesh || p.mesh === hitMesh) found = true; });
+          return found;
+        });
+        if (hitPiece) {
+          // Only block if piece is closer than any bot
+          const botMeshes = bots.filter(b => b.alive).map(b => b.mesh);
+          const botHits = ray.intersectObjects(botMeshes, true);
+          const botDist = botHits.length > 0 ? botHits[0].distance : Infinity;
+          if (pieceHits[0].distance <= botDist) {
+            damagePiece(hitPiece, WEAPONS[player.weapon].damage);
+            spawnImpact(pieceHits[0].point);
+            return;
+          }
+        }
+      }
+    }
     // Check bots
     for (const bot of bots) {
       if (!bot.alive) continue;
@@ -1868,6 +1893,31 @@ function damageBot(bot, dmg) {
   bot.hp -= dmg;
   bot.hitFlash = 0.2;
   if (bot.hp <= 0) killBot(bot);
+}
+
+function damagePiece(piece, dmg) {
+  piece.hp -= dmg;
+  // Darken tint based on remaining HP
+  const t = Math.max(0, piece.hp / piece.maxHp);
+  const base = MATERIALS_DEF[piece.mat].color;
+  const r = ((base >> 16) & 0xff) / 255;
+  const g = ((base >>  8) & 0xff) / 255;
+  const b = ( base        & 0xff) / 255;
+  piece.mesh.traverse(child => {
+    if (child.isMesh) child.material.color.setRGB(r * (0.35 + t * 0.65), g * (0.35 + t * 0.65), b * (0.35 + t * 0.65));
+  });
+  if (piece.hp <= 0) destroyPiece(piece);
+}
+
+function destroyPiece(piece) {
+  scene.remove(piece.mesh);
+  // Remove all envObjects entries belonging to this piece
+  piece.envObjs.forEach(obj => {
+    const idx = envObjects.indexOf(obj);
+    if (idx !== -1) envObjects.splice(idx, 1);
+  });
+  const idx = placedPieces.indexOf(piece);
+  if (idx !== -1) placedPieces.splice(idx, 1);
 }
 
 function killBot(bot) {
