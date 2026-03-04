@@ -881,7 +881,7 @@ function updateGhost() {
   const targets = [terrainMesh, ...placedPieces.map(p => p.mesh)];
   const hits = ray.intersectObjects(targets, true);
 
-  if (!hits.length || hits[0].distance > 10) { ghostMesh.visible = false; return; }
+  if (!hits.length || hits[0].distance > 20) { ghostMesh.visible = false; return; }
 
   const hit = hits[0];
   let gx, gy, gz, ry = 0;
@@ -1647,11 +1647,6 @@ canvas.addEventListener('wheel', e => {
   rebuildGhost();
 }, { passive: true });
 
-// Left-click: place piece (must be on canvas, before shoot fires)
-canvas.addEventListener('mousedown', e => {
-  if (state.phase !== 'playing' || settingsOpen) return;
-  if (buildMode && e.button === 0) { e.stopImmediatePropagation(); placePiece(); }
-});
 
 // Mouse look
 document.addEventListener('mousemove', e => {
@@ -1670,11 +1665,11 @@ document.addEventListener('pointerlockchange', () => {
     document.pointerLockElement === canvas ? 'block' : 'none';
 });
 
-// Shoot on click
+// Shoot on click (or place piece in build mode)
 document.addEventListener('mousedown', e => {
   if (e.button === 0 && state.phase === 'playing' &&
       document.pointerLockElement === canvas) {
-    if (buildMode) return;
+    if (buildMode) { placePiece(); return; }
     shoot();
   }
 });
@@ -2492,6 +2487,22 @@ function updateHUD() {
   hctx.font = 'bold 14px Segoe UI';
   hctx.textAlign = 'left';
   hctx.fillText(`Kills: ${state.kills}`, 28, 40);
+
+  // ── Build mode indicator (below kills) ──
+  if (buildMode) {
+    hctx.fillStyle = 'rgba(0,0,0,0.5)';
+    hctx.beginPath();
+    hctx.roundRect(16, 60, 130, 32, 6);
+    hctx.fill();
+    hctx.fillStyle = '#f0c040';
+    hctx.font = 'bold 15px Segoe UI';
+    hctx.textAlign = 'left';
+    hctx.fillText('BUILD', 28, 81);
+    // Show current piece type and material
+    hctx.fillStyle = '#ccc';
+    hctx.font = '11px Segoe UI';
+    hctx.fillText(`${buildType} · ${buildMat}`, 28, 94);
+  }
 
   // ── Level / Bots alive (top center) ──
   const levelLabel = state.endless ? `Endless ${state.endlessLevel}` : `Level ${state.level}`;
