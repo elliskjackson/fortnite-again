@@ -570,6 +570,7 @@ terrainMesh.updateMatrixWorld(true);
 // ════════════════════════════════════════════════════════════════
 const envObjects = [];   // used for collision
 const chests = [];
+const worldWeapons = [];  // dropped loot: { mesh, weaponType, x, y, z, bobT, lifetime }
 
 // ════════════════════════════════════════════════════════════════
 //  BUILDING SYSTEM
@@ -1922,6 +1923,7 @@ function loop(t) {
     updateDust(dt);
     updateLightning(dt);
     if (buildMode) updateGhost();
+    updateWorldWeapons(dt);
   }
   composer.render();
 }
@@ -2154,6 +2156,63 @@ function damageBot(bot, dmg) {
   if (bot.hp <= 0) killBot(bot);
 }
 
+const WEAPON_LOOT_COLORS = {
+  pistol:  0xaaaaaa,
+  rifle:   0x556655,
+  shotgun: 0x8B4513,
+  sniper:  0x334455,
+  smg:     0x888888,
+};
+
+function spawnLoot(x, y, z, weaponType) {
+  const color = WEAPON_LOOT_COLORS[weaponType] || 0xffffff;
+  const group = new THREE.Group();
+
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(0.5, 0.15, 1.0),
+    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.4, roughness: 0.6, metalness: 0.4 })
+  );
+  group.add(body);
+
+  // Small glow light (range 4 — cheap)
+  const light = new THREE.PointLight(color, 1.2, 4);
+  light.position.y = 0.4;
+  group.add(light);
+
+  group.position.set(x, y + 0.8, z);
+  scene.add(group);
+
+  worldWeapons.push({ mesh: group, weaponType, x, y: y + 0.8, z, bobT: Math.random() * Math.PI * 2, lifetime: 60 });
+}
+
+function updateWorldWeapons(dt) {
+  for (let i = worldWeapons.length - 1; i >= 0; i--) {
+    const w = worldWeapons[i];
+    w.lifetime -= dt;
+
+    // Bob and rotate
+    w.bobT += dt * 2;
+    w.mesh.position.y = w.y + Math.sin(w.bobT) * 0.18;
+    w.mesh.rotation.y += dt * 1.5;
+
+    // Auto-collect if player walks within 1.5 units
+    const dx = camera.position.x - w.x;
+    const dz = camera.position.z - w.z;
+    if (Math.sqrt(dx * dx + dz * dz) < 1.5) {
+      giveWeapon(w.weaponType);
+      scene.remove(w.mesh);
+      worldWeapons.splice(i, 1);
+      continue;
+    }
+
+    // Despawn after 60 seconds
+    if (w.lifetime <= 0) {
+      scene.remove(w.mesh);
+      worldWeapons.splice(i, 1);
+    }
+  }
+}
+
 function damagePiece(piece, dmg) {
   piece.hp -= dmg;
   // Darken tint based on remaining HP
@@ -2182,6 +2241,7 @@ function destroyPiece(piece) {
 function killBot(bot) {
   bot.alive = false;
   bot.deathTimer = 2;
+  spawnLoot(bot.x, bot.y, bot.z, bot.weapon || 'pistol');
   bot.parts.allMeshes.forEach(m => {
     const baseColor = m.material.userData.baseColor;
     m.material = m.material.clone();
