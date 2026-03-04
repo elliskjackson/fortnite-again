@@ -881,33 +881,43 @@ function updateGhost() {
   const targets = [terrainMesh, ...placedPieces.map(p => p.mesh)];
   const hits = ray.intersectObjects(targets, true);
 
-  if (!hits.length || hits[0].distance > 20) { ghostMesh.visible = false; return; }
-
-  const hit = hits[0];
   let gx, gy, gz, ry = 0;
 
-  if (buildType === 'wall') {
-    const nx = Math.abs(hit.normal.x), nz = Math.abs(hit.normal.z);
-    if (nx > nz) {
-      gx = snapGrid(hit.point.x + hit.normal.x * 0.15);
+  const hit = (hits.length && hits[0].distance <= 20) ? hits[0] : null;
+
+  if (hit) {
+    if (buildType === 'wall') {
+      const nx = Math.abs(hit.normal.x), nz = Math.abs(hit.normal.z);
+      if (nx > nz) {
+        gx = snapGrid(hit.point.x + hit.normal.x * 0.15);
+        gz = snapGrid(hit.point.z);
+        ry = Math.PI / 2;
+      } else {
+        gx = snapGrid(hit.point.x);
+        gz = snapGrid(hit.point.z + hit.normal.z * 0.15);
+        ry = 0;
+      }
+      gy = snapGrid(hit.point.y - 2) + 2;
+    } else if (buildType === 'floor') {
+      gx = snapGrid(hit.point.x);
       gz = snapGrid(hit.point.z);
-      ry = Math.PI / 2;
+      gy = snapGrid(hit.point.y) + 0.15;
+      ry = 0;
     } else {
       gx = snapGrid(hit.point.x);
-      gz = snapGrid(hit.point.z + hit.normal.z * 0.15);
-      ry = 0;
+      gz = snapGrid(hit.point.z);
+      gy = snapGrid(hit.point.y);
+      ry = Math.round(player.yaw / (Math.PI/2)) * (Math.PI/2);
     }
-    gy = snapGrid(hit.point.y - 2) + 2;
-  } else if (buildType === 'floor') {
-    gx = snapGrid(hit.point.x);
-    gz = snapGrid(hit.point.z);
-    gy = snapGrid(hit.point.y) + 0.15;
-    ry = 0;
   } else {
-    gx = snapGrid(hit.point.x);
-    gz = snapGrid(hit.point.z);
-    gy = snapGrid(hit.point.y);
-    ry = Math.round(player.yaw / (Math.PI/2)) * (Math.PI/2);
+    // Fallback: place 8 units in front of player at ground level
+    const fwdX = -Math.sin(player.yaw) * 8;
+    const fwdZ = -Math.cos(player.yaw) * 8;
+    gx = snapGrid(camera.position.x + fwdX);
+    gz = snapGrid(camera.position.z + fwdZ);
+    const groundY = getTerrainY(gx, gz);
+    gy = buildType === 'wall' ? snapGrid(groundY - 2) + 2 : groundY;
+    ry = buildType === 'wall' ? 0 : Math.round(player.yaw / (Math.PI/2)) * (Math.PI/2);
   }
 
   ry += buildRot * (Math.PI / 2);
@@ -2050,6 +2060,18 @@ function updateBots(dt) {
     runBotMovement(bot, dt);
     runBotShooting(bot, dt, distToPlayer);
 
+    // Bots pick up nearby loot
+    for (let wi = worldWeapons.length - 1; wi >= 0; wi--) {
+      const ww = worldWeapons[wi];
+      const wx = ww.x - bot.x, wz = ww.z - bot.z;
+      if (Math.sqrt(wx*wx + wz*wz) < 2) {
+        bot.weapon = ww.weaponType;
+        scene.remove(ww.mesh);
+        worldWeapons.splice(wi, 1);
+        break;
+      }
+    }
+
     if (bot.hitFlash > 0) {
       bot.hitFlash -= dt;
       const flashOn = bot.hitFlash > 0;
@@ -2084,8 +2106,9 @@ function updateBots(dt) {
       p.rightArmPivot.rotation.x = -Math.sin(bot.walkPhase) * armAmp;
     }
 
-    // Head turn toward player (smooth lerp, clamped ±60°)
-    const angleToPlayer = Math.atan2(pp.x - bot.x, pp.z - bot.z);
+    // Head turn toward target (smooth lerp, clamped ±60°)
+    const lookAt = getTargetPos(bot);
+    const angleToPlayer = Math.atan2(lookAt.x - bot.x, lookAt.z - bot.z);
     const TWO_PI = Math.PI * 2;
     const relAngle = ((angleToPlayer - bot.yaw + Math.PI) % TWO_PI + TWO_PI) % TWO_PI - Math.PI;
     const targetHeadY = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, relAngle));
@@ -2096,9 +2119,21 @@ function updateBots(dt) {
   state.botsAlive = alive;
 }
 
+function getTargetPos(bot) {
+  if (bot.target === 'player') return camera.position;
+  if (bot.target && bot.target.alive) return bot.target;
+  return camera.position;
+}
+
 function runBotAI(bot, dt, distToPlayer) {
   const pp = camera.position;
   const playerVisible = distToPlayer < bot.aggroRadius && hasLOS(bot, pp);
+
+  // Clear dead bot target
+  if (bot.target && bot.target !== 'player' && !bot.target.alive) {
+    bot.target = null;
+    bot.state = 'patrol';
+  }
 
   if (bot.hp < 25) {
     bot.state = 'flee';
@@ -2108,11 +2143,29 @@ function runBotAI(bot, dt, distToPlayer) {
   } else if (playerVisible) {
     bot.state = 'chase';
     bot.target = 'player';
-  } else if (bot.state === 'attack' || bot.state === 'chase') {
-    bot.state = 'patrol';
-    bot.target = null;
   } else {
-    bot.state = 'patrol';
+    // No player visible — find nearest enemy bot
+    let nearest = null, nearestDist = bot.aggroRadius;
+    for (const other of bots) {
+      if (other === bot || !other.alive) continue;
+      const ex = other.x - bot.x, ez = other.z - bot.z;
+      const d = Math.sqrt(ex*ex + ez*ez);
+      if (d < nearestDist && hasLOS(bot, other)) {
+        nearestDist = d; nearest = other;
+      }
+    }
+    if (nearest && nearestDist < 15) {
+      bot.state = 'attack';
+      bot.target = nearest;
+    } else if (nearest) {
+      bot.state = 'chase';
+      bot.target = nearest;
+    } else if (bot.state === 'attack' || bot.state === 'chase') {
+      bot.state = 'patrol';
+      bot.target = null;
+    } else {
+      bot.state = 'patrol';
+    }
   }
 }
 
@@ -2137,16 +2190,16 @@ function runBotMovement(bot, dt) {
     tx = bot.x + Math.sin(bot.yaw) * bot.speed * dt * 0.4;
     tz = bot.z + Math.cos(bot.yaw) * bot.speed * dt * 0.4;
   } else if (bot.state === 'chase') {
-    const pp = camera.position;
-    bot.yaw = Math.atan2(pp.x - bot.x, pp.z - bot.z);
+    const tp = getTargetPos(bot);
+    bot.yaw = Math.atan2(tp.x - bot.x, tp.z - bot.z);
     tx = bot.x + Math.sin(bot.yaw) * bot.speed * dt;
     tz = bot.z + Math.cos(bot.yaw) * bot.speed * dt;
   } else if (bot.state === 'attack') {
-    const pp = camera.position;
-    bot.yaw = Math.atan2(pp.x - bot.x, pp.z - bot.z);
+    const tp = getTargetPos(bot);
+    bot.yaw = Math.atan2(tp.x - bot.x, tp.z - bot.z);
   } else if (bot.state === 'flee') {
-    const pp = camera.position;
-    bot.yaw = Math.atan2(bot.x - pp.x, bot.z - pp.z);
+    const tp = getTargetPos(bot);
+    bot.yaw = Math.atan2(bot.x - tp.x, bot.z - tp.z);
     tx = bot.x + Math.sin(bot.yaw) * bot.speed * dt * 1.2;
     tz = bot.z + Math.cos(bot.yaw) * bot.speed * dt * 1.2;
   }
@@ -2164,7 +2217,11 @@ function runBotShooting(bot, dt, distToPlayer) {
   if (bot.fireCooldown > 0) return;
   bot.fireCooldown = WEAPONS[bot.weapon].fireRate * (1 / bot.accuracy) * 0.5;
   if (Math.random() > bot.accuracy) return;
-  damagePlayer(WEAPONS[bot.weapon].damage * 0.6);
+  if (bot.target === 'player') {
+    damagePlayer(WEAPONS[bot.weapon].damage * 0.6);
+  } else if (bot.target && bot.target.alive) {
+    damageBot(bot.target, WEAPONS[bot.weapon].damage * 0.8);
+  }
 }
 
 function damageBot(bot, dmg) {
