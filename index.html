@@ -819,7 +819,9 @@ function applyEdit() {
     scene.add(group);
     editPiece.mesh = group;
 
-    // Rebuild collision: remove old envObjs, add per-column entries
+    // Rebuild collision: per-panel AABBs so removed panels (doors/windows) are
+    // truly passable. Each panel carries minY/maxY so panels above a door gap
+    // don't block players who are short enough to walk through below them.
     editPiece.envObjs.forEach(o => {
       const idx = envObjects.indexOf(o);
       if (idx !== -1) envObjects.splice(idx, 1);
@@ -827,18 +829,17 @@ function applyEdit() {
     editPiece.envObjs = [];
 
     const isZFacing = Math.abs(editPiece.rotation % Math.PI) < 0.1;
-    const bx = group.position.x, bz = group.position.z;
-    for (let col = 0; col < 3; col++) {
-      const colPanels = [col, col + 3, col + 6];
-      if (!colPanels.every(r => removed.has(r))) {
-        const offset = (col - 1) * WP;
-        const obj = isZFacing
-          ? { x: bx + offset, z: bz, w: WP / 2, d: 0.25 }
-          : { x: bx, z: bz + offset, w: 0.25, d: WP / 2 };
-        envObjects.push(obj);
-        editPiece.envObjs.push(obj);
-      }
-    }
+    const bx = group.position.x, by = group.position.y, bz = group.position.z;
+    WALL_PANEL_OFFSETS.forEach(([ox, oy], i) => {
+      if (removed.has(i)) return; // gap — no collision
+      const panelMinY = by + oy - WP / 2;
+      const panelMaxY = by + oy + WP / 2;
+      const obj = isZFacing
+        ? { x: bx + ox, z: bz,      w: WP / 2, d: 0.15, minY: panelMinY, maxY: panelMaxY }
+        : { x: bx,      z: bz + ox, w: 0.15, d: WP / 2, minY: panelMinY, maxY: panelMaxY };
+      envObjects.push(obj);
+      editPiece.envObjs.push(obj);
+    });
   } else {
     // floor/ramp/cone: replace mesh with Group of non-removed sub-panels
     const removed2 = editSelectedPanels;
@@ -1100,13 +1101,18 @@ function updateGhost() {
   ghostMesh.rotation.y = ry;
   ghostMesh.visible = true;
 
-  // Tint ghost red if placement would be floating (no support)
+  // Tint ghost red if placement is too far away or would be floating (no support)
+  const dx = gx - camera.position.x, dz = gz - camera.position.z;
+  const tooFar = dx * dx + dz * dz > (GRID * 2) * (GRID * 2);
   const placementSupported = isSupported(gx, gy, gz);
-  ghostMesh.material.color.setHex(placementSupported ? MATERIALS_DEF[buildMat].color : 0xff3333);
+  ghostMesh.material.color.setHex((placementSupported && !tooFar) ? MATERIALS_DEF[buildMat].color : 0xff3333);
 }
 
 function placePiece() {
   if (!buildMode || !ghostMesh || !ghostMesh.visible) return;
+  const _pdx = ghostMesh.position.x - camera.position.x;
+  const _pdz = ghostMesh.position.z - camera.position.z;
+  if (_pdx * _pdx + _pdz * _pdz > (GRID * 2) * (GRID * 2)) return;
   if (!isSupported(ghostMesh.position.x, ghostMesh.position.y, ghostMesh.position.z)) return;
 
   const mesh = new THREE.Mesh(getPieceGeo(buildType), pieceMat(buildMat, 1));
@@ -2326,8 +2332,10 @@ function getTerrainY(x, z) {
 function checkWallCollision(nx, nz) {
   const footY = camera.position.y - (player.crouching ? PLAYER_HEIGHT * 0.6 : PLAYER_HEIGHT);
   for (const obj of envObjects) {
-    // Skip if player feet are above the wall top (standing on roof or top of placed wall)
+    // Skip if player feet are above the wall top (standing on roof or placed wall)
     if (obj.maxY !== undefined && footY > obj.maxY - 0.1) continue;
+    // Skip if panel bottom is above the player's head (e.g. beam above a door gap)
+    if (obj.minY !== undefined && camera.position.y < obj.minY) continue;
     if (Math.abs(nx - obj.x) < obj.w + 0.4 && Math.abs(nz - obj.z) < obj.d + 0.4)
       return true;
   }
