@@ -834,9 +834,13 @@ function applyEdit() {
       if (removed.has(i)) return; // gap — no collision
       const panelMinY = by + oy - WP / 2;
       const panelMaxY = by + oy + WP / 2;
+      // Use WP/2 - 0.2 so door/window corridors are comfortably wide:
+      // adjacent-panel AABB block range = 0.467 + 0.4 = 0.867, giving
+      // 1.333 - 0.867 = 0.467 clearance (0.93-unit walkable corridor).
+      const hw = WP / 2 - 0.2; // horizontal half-width
       const obj = isZFacing
-        ? { x: bx + ox, z: bz,      w: WP / 2, d: 0.15, minY: panelMinY, maxY: panelMaxY }
-        : { x: bx,      z: bz + ox, w: 0.15, d: WP / 2, minY: panelMinY, maxY: panelMaxY };
+        ? { x: bx + ox, z: bz,      w: hw,  d: 0.15, minY: panelMinY, maxY: panelMaxY }
+        : { x: bx,      z: bz + ox, w: 0.15, d: hw,  minY: panelMinY, maxY: panelMaxY };
       envObjects.push(obj);
       editPiece.envObjs.push(obj);
     });
@@ -1097,22 +1101,41 @@ function updateGhost() {
 
   ry += buildRot * (Math.PI / 2);
 
+  // Clamp ghost to max build distance (GRID*2). If the snapped position is
+  // further away, project it back onto the max-distance circle and re-snap.
+  const _maxDist = GRID * 2;
+  const _bdx = gx - camera.position.x, _bdz = gz - camera.position.z;
+  const _bDistSq = _bdx * _bdx + _bdz * _bdz;
+  if (_bDistSq > _maxDist * _maxDist) {
+    const _scale = _maxDist / Math.sqrt(_bDistSq);
+    const _cx = camera.position.x + _bdx * _scale;
+    const _cz = camera.position.z + _bdz * _scale;
+    const _isXF = Math.abs(Math.sin(ry)) > 0.7;
+    if (buildType === 'wall') {
+      gx = _isXF ? snapFace(_cx) : snapGrid(_cx);
+      gz = _isXF ? snapGrid(_cz) : snapFace(_cz);
+      gy = getTerrainY(gx, gz) + 2;
+    } else {
+      gx = snapGrid(_cx);
+      gz = snapGrid(_cz);
+      const _tg = getTerrainY(gx, gz);
+      if (buildType === 'floor')     gy = snapGrid(Math.max(_tg, footY)) + 0.15;
+      else if (buildType === 'ramp') gy = snapGrid(Math.max(_tg, footY));
+      else                           gy = snapGrid(_tg);
+    }
+  }
+
   ghostMesh.position.set(gx, gy, gz);
   ghostMesh.rotation.y = ry;
   ghostMesh.visible = true;
 
-  // Tint ghost red if placement is too far away or would be floating (no support)
-  const dx = gx - camera.position.x, dz = gz - camera.position.z;
-  const tooFar = dx * dx + dz * dz > (GRID * 2) * (GRID * 2);
+  // Tint ghost red only if placement would be floating (no support)
   const placementSupported = isSupported(gx, gy, gz);
-  ghostMesh.material.color.setHex((placementSupported && !tooFar) ? MATERIALS_DEF[buildMat].color : 0xff3333);
+  ghostMesh.material.color.setHex(placementSupported ? MATERIALS_DEF[buildMat].color : 0xff3333);
 }
 
 function placePiece() {
   if (!buildMode || !ghostMesh || !ghostMesh.visible) return;
-  const _pdx = ghostMesh.position.x - camera.position.x;
-  const _pdz = ghostMesh.position.z - camera.position.z;
-  if (_pdx * _pdx + _pdz * _pdz > (GRID * 2) * (GRID * 2)) return;
   if (!isSupported(ghostMesh.position.x, ghostMesh.position.y, ghostMesh.position.z)) return;
 
   const mesh = new THREE.Mesh(getPieceGeo(buildType), pieceMat(buildMat, 1));
