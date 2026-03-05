@@ -155,6 +155,9 @@
     <div class="settingsRow"><label>Place Floor</label>    <button class="bindBtn" data-action="pieceFloor"></button></div>
     <div class="settingsRow"><label>Place Ramp</label>     <button class="bindBtn" data-action="pieceRamp"></button></div>
     <div class="settingsRow"><label>Place Cone</label>     <button class="bindBtn" data-action="pieceCone"></button></div>
+    <div class="settingsRow" style="margin-top:10px">
+      <button id="resetBindsBtn" style="padding:6px 16px;background:#444;color:#eee;border:1px solid #888;border-radius:4px;cursor:pointer;font-size:0.9em">Reset to Defaults</button>
+    </div>
   </div>
 
   <!-- Mouse tab -->
@@ -324,6 +327,13 @@ let reverseBinds = buildReverseBinds();
     settings.bloom = parseFloat(bloomSlider.value);
     bloomVal.textContent = settings.bloom.toFixed(2);
     if (typeof bloomPass !== 'undefined') bloomPass.strength = settings.bloom;
+    saveSettings();
+  });
+
+  document.getElementById('resetBindsBtn').addEventListener('click', () => {
+    settings.binds = Object.assign({}, DEFAULT_BINDS);
+    reverseBinds = buildReverseBinds();
+    refreshBindBtns();
     saveSettings();
   });
 
@@ -594,6 +604,9 @@ const MATERIALS_DEF = {
 };
 
 function snapGrid(v) { return Math.round(v / GRID) * GRID; }
+// Snaps to cell-face positions (GRID/2 offsets): ..., -6, -2, 2, 6, ...
+// Walls live at these positions on their thin axis so they touch cell edges, not centers.
+function snapFace(v) { return Math.round((v - GRID/2) / GRID) * GRID + GRID/2; }
 
 function createRampGeo() {
   const g = new THREE.BufferGeometry();
@@ -635,6 +648,7 @@ function pieceMat(matName, opacity) {
     emissive: baseColor.clone().multiplyScalar(0.12),
     emissiveIntensity: 1,
     transparent: opacity < 1, opacity: opacity ?? 1,
+    side: THREE.DoubleSide,   // raycasts hit from either face (front or back)
   });
   return m;
 }
@@ -1000,17 +1014,24 @@ function updateGhost() {
 
   if (hit) {
     if (buildType === 'wall') {
-      const nx = Math.abs(hit.normal.x), nz = Math.abs(hit.normal.z);
-      if (nx > nz) {
-        gx = snapGrid(hit.point.x + hit.normal.x * 0.15);
+      // Stable orientation from player yaw (avoids terrain-normal flickering).
+      // Face-snap the perpendicular axis so walls align to cell edges, not cell
+      // centers — this prevents walls clipping through adjacent ramps/floors.
+      ry = Math.round(player.yaw / (Math.PI / 2)) * (Math.PI / 2);
+      const finalRy = ry + buildRot * (Math.PI / 2);
+      const isXFacingGhost = Math.abs(Math.sin(finalRy)) > 0.7;
+      if (isXFacingGhost) {
+        // Wall thin in X → X face, Z cell-center
+        gx = snapFace(hit.point.x);
         gz = snapGrid(hit.point.z);
-        ry = Math.PI / 2;
       } else {
+        // Wall thin in Z → X cell-center, Z face
         gx = snapGrid(hit.point.x);
-        gz = snapGrid(hit.point.z + hit.normal.z * 0.15);
-        ry = 0;
+        gz = snapFace(hit.point.z);
       }
-      gy = snapGrid(hit.point.y - 2) + 2;
+      // Clamp bottom of wall to terrain so it never sinks underground
+      const terrainAtWall = getTerrainY(gx, gz);
+      gy = Math.max(snapGrid(hit.point.y - 2) + 2, terrainAtWall + 2);
     } else if (buildType === 'floor') {
       ry = 0;
       const terrainAtFloor = getTerrainY(camera.position.x, camera.position.z);
@@ -1055,13 +1076,22 @@ function updateGhost() {
     // Fallback: place 8 units in front of player
     const fwdX = -Math.sin(player.yaw) * 8;
     const fwdZ = -Math.cos(player.yaw) * 8;
-    gx = snapGrid(camera.position.x + fwdX);
-    gz = snapGrid(camera.position.z + fwdZ);
-    const groundY = getTerrainY(gx, gz);
-    // For ramps, bias to foot level so staircase continues at correct height
-    const baseY = buildType === 'ramp' ? Math.max(groundY, footY) : groundY;
-    gy = buildType === 'wall' ? snapGrid(groundY - 2) + 2 : snapGrid(baseY);
-    ry = buildType === 'wall' ? 0 : Math.round(player.yaw / (Math.PI/2)) * (Math.PI/2);
+    const baseRyFb = Math.round(player.yaw / (Math.PI/2)) * (Math.PI/2);
+    if (buildType === 'wall') {
+      ry = baseRyFb;
+      const finalRyFb = baseRyFb + buildRot * (Math.PI/2);
+      const isXFacingFb = Math.abs(Math.sin(finalRyFb)) > 0.7;
+      gx = isXFacingFb ? snapFace(camera.position.x + fwdX) : snapGrid(camera.position.x + fwdX);
+      gz = isXFacingFb ? snapGrid(camera.position.z + fwdZ) : snapFace(camera.position.z + fwdZ);
+      gy = getTerrainY(gx, gz) + 2;
+    } else {
+      gx = snapGrid(camera.position.x + fwdX);
+      gz = snapGrid(camera.position.z + fwdZ);
+      const groundY = getTerrainY(gx, gz);
+      const baseY = buildType === 'ramp' ? Math.max(groundY, footY) : groundY;
+      gy = snapGrid(baseY);
+      ry = baseRyFb;
+    }
   }
 
   ry += buildRot * (Math.PI / 2);
