@@ -646,6 +646,17 @@ function addEdgeLines(mesh, color, opacity) {
   mesh.add(new THREE.LineSegments(edges, mat));
 }
 
+// Returns only Mesh objects from a list (flattens Groups, skips LineSegments).
+// Use this instead of recursive:true to avoid LineSegments children polluting raycasts.
+function flatMeshes(objects) {
+  const out = [];
+  for (const obj of objects) {
+    if (obj.isMesh) out.push(obj);
+    else if (obj.isGroup) obj.traverse(c => { if (c.isMesh) out.push(c); });
+  }
+  return out;
+}
+
 // Edit mode state
 let editMode           = false;
 let editPiece          = null;
@@ -899,7 +910,7 @@ function isSupported(gx, gy, gz) {
   for (const surf of buildingSurfaces) {
     const dx = Math.abs(surf.position.x - gx);
     const dz = Math.abs(surf.position.z - gz);
-    const surfTop = surf.position.y + 0.25;
+    const surfTop = surf.position.y + 0.5;
     if (dx < GRID * 1.5 && dz < GRID * 1.5 && Math.abs(surfTop - gy) < GRID * 0.65) return true;
   }
 
@@ -931,7 +942,7 @@ function pruneUnsupported() {
     for (const surf of buildingSurfaces) {
       const dx = Math.abs(surf.position.x - px);
       const dz = Math.abs(surf.position.z - pz);
-      if (dx < GRID * 1.5 && dz < GRID * 1.5 && Math.abs((surf.position.y + 0.25) - py) < GRID * 0.65) {
+      if (dx < GRID * 1.5 && dz < GRID * 1.5 && Math.abs((surf.position.y + 0.5) - py) < GRID * 0.65) {
         supported.add(i); break;
       }
     }
@@ -976,8 +987,8 @@ function updateGhost() {
     const dz = p.mesh.position.z - camera.position.z;
     return dx*dx + dz*dz < 900; // within 30 units
   }).map(p => p.mesh);
-  const targets = [terrainMesh, ...nearPieces];
-  const hits = ray.intersectObjects(targets, true);
+  const targets = [terrainMesh, ...flatMeshes(nearPieces)];
+  const hits = ray.intersectObjects(targets, false);
 
   let gx, gy, gz, ry = 0;
 
@@ -1010,8 +1021,8 @@ function updateGhost() {
         gx = snapGrid(camera.position.x + fwdX);
         gz = snapGrid(camera.position.z + fwdZ);
         gy = snapGrid(footY) + 0.15;
-      } else if (hit.point.y > footY + 0.5) {
-        // Looking up at a ramp or wall above — snap floor to top of hit surface
+      } else if (hit.point.y > footY + 0.5 && player.pitch > 0.15) {
+        // Explicitly looking upward at a ramp/wall above — snap floor to top of hit surface
         gx = snapGrid(hit.point.x);
         gz = snapGrid(hit.point.z);
         gy = GRID * Math.ceil(hit.point.y / GRID) + 0.15;
@@ -1203,10 +1214,11 @@ function addBuilding(x, z, seed) {
   addPanel(new THREE.BoxGeometry(w - 0.6, 0.2, d - 0.6), x, groundY + 0.1, z, true);
   // floor gets no envObjects entry (player already snaps to terrain Y)
 
-  // Roof detail — tracked in buildingSurfaces so player can stand on top
-  const roofGeo = new THREE.BoxGeometry(w + 0.5, 0.4, d + 0.5);
+  // Roof detail — tracked in buildingSurfaces so player can stand on top.
+  // 1.0 unit thick so fast falls can't tunnel through (dt=0.05 × max velY = 1 unit/frame).
+  const roofGeo = new THREE.BoxGeometry(w + 0.5, 1.0, d + 0.5);
   const roof = new THREE.Mesh(roofGeo, new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.9, metalness: 0.1 }));
-  roof.position.set(x, groundY + h + 0.2, z);
+  roof.position.set(x, groundY + h + 0.5, z);
   roof.castShadow = true;
   scene.add(roof);
   buildingSurfaces.push(roof);
@@ -1565,8 +1577,8 @@ function shoot() {
     const ray = new THREE.Raycaster(camera.position.clone(), dir, 0.1, WEAPONS[player.weapon].range);
     // Check placed pieces first
     if (placedPieces.length > 0) {
-      const pieceMeshes = placedPieces.map(p => p.mesh);
-      const pieceHits = ray.intersectObjects(pieceMeshes, true);
+      const pieceMeshes = flatMeshes(placedPieces.map(p => p.mesh));
+      const pieceHits = ray.intersectObjects(pieceMeshes, false);
       if (pieceHits.length > 0) {
         // Find the placedPiece entry for the hit mesh
         const hitMesh = pieceHits[0].object;
@@ -2247,10 +2259,14 @@ function updatePlayer(dt) {
     if (dx*dx + dz*dz < 2500) surfTargets.push(m); // buildings can be large
   });
   if (surfTargets.length > 0) {
-    const downRay = new THREE.Raycaster(camera.position.clone(), new THREE.Vector3(0, -1, 0));
-    const pieceHits = downRay.intersectObjects(surfTargets, true);
+    // Start ray 0.5 above camera to catch thin surfaces (roof slabs) even if camera
+    // clips slightly into them during fast falls.
+    const rayOrigin = camera.position.clone();
+    rayOrigin.y += 0.5;
+    const downRay = new THREE.Raycaster(rayOrigin, new THREE.Vector3(0, -1, 0));
+    const pieceHits = downRay.intersectObjects(flatMeshes(surfTargets), false);
     if (pieceHits.length > 0) {
-      const pieceGroundY = (camera.position.y - pieceHits[0].distance) + height;
+      const pieceGroundY = (rayOrigin.y - pieceHits[0].distance) + height;
       if (pieceGroundY > groundY) groundY = pieceGroundY;
     }
   }
