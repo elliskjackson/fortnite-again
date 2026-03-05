@@ -289,7 +289,15 @@ let reverseBinds = buildReverseBinds();
 
   document.addEventListener('keydown', e => {
     if (!listeningBtn) return;
+    // If settings was closed while we were listening (e.g. Escape), cancel silently
+    if (!settingsOpen) {
+      listeningBtn.classList.remove('listening');
+      listeningBtn.textContent = codeToLabel(settings.binds[listeningBtn.dataset.action]);
+      listeningBtn = null;
+      return;
+    }
     e.preventDefault();
+    e.stopPropagation(); // don't let the bound key leak into game handlers
     settings.binds[listeningBtn.dataset.action] = e.code;
     reverseBinds = buildReverseBinds();
     listeningBtn.classList.remove('listening');
@@ -568,7 +576,8 @@ terrainMesh.updateMatrixWorld(true);
 // ════════════════════════════════════════════════════════════════
 //  ENVIRONMENT OBJECTS
 // ════════════════════════════════════════════════════════════════
-const envObjects = [];   // used for collision
+const envObjects = [];       // used for collision
+const buildingSurfaces = []; // roof/floor meshes players can stand on top of
 const chests = [];
 const worldWeapons = [];  // dropped loot: { mesh, weaponType, x, y, z, bobT, lifetime }
 
@@ -627,10 +636,10 @@ function pieceMat(matName, opacity) {
 }
 
 // Edit mode state
-let editMode   = false;
-let editPiece  = null;
-let editPreset = 0;
-let editPanels = [];
+let editMode           = false;
+let editPiece          = null;
+let editSelectedPanels = new Set();  // panel indices marked for removal
+let editPanels         = [];
 
 // Wall edit presets: 3×3 grid indices 0=TL 1=TC 2=TR 3=ML 4=MC 5=MR 6=BL 7=BC 8=BR
 const WALL_PRESETS = [
@@ -694,11 +703,8 @@ const WALL_PANEL_OFFSETS = [
 ];
 
 function buildEditPanels(piece) {
-  editPanels.forEach(m => scene.remove(m));
+  editPanels.forEach(m => { m.geometry.dispose(); m.material.dispose(); scene.remove(m); });
   editPanels = [];
-
-  const presets = getPresets(piece.type);
-  const removed = new Set(presets[editPreset].remove);
 
   function panelMat(isRemoved) {
     return new THREE.MeshStandardMaterial({
@@ -710,7 +716,7 @@ function buildEditPanels(piece) {
 
   if (piece.type === 'wall') {
     WALL_PANEL_OFFSETS.forEach(([ox, oy], i) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(WP - 0.05, WP - 0.05, 0.35), panelMat(removed.has(i)));
+      const m = new THREE.Mesh(new THREE.BoxGeometry(WP - 0.05, WP - 0.05, 0.35), panelMat(editSelectedPanels.has(i)));
       const local = new THREE.Vector3(ox, oy, 0).applyQuaternion(piece.mesh.quaternion);
       m.position.copy(piece.mesh.position).add(local);
       m.rotation.copy(piece.mesh.rotation);
@@ -719,7 +725,7 @@ function buildEditPanels(piece) {
     });
   } else if (piece.type === 'floor') {
     [[-1,0,-1],[1,0,-1],[-1,0,1],[1,0,1]].forEach(([ox,oy,oz], i) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.35, 1.95), panelMat(removed.has(i)));
+      const m = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.35, 1.95), panelMat(editSelectedPanels.has(i)));
       const local = new THREE.Vector3(ox, oy, oz).applyQuaternion(piece.mesh.quaternion);
       m.position.copy(piece.mesh.position).add(local);
       m.rotation.copy(piece.mesh.rotation);
@@ -728,7 +734,7 @@ function buildEditPanels(piece) {
     });
   } else if (piece.type === 'ramp') {
     [[-1,2,-1],[1,2,-1],[-1,0,1],[1,0,1]].forEach(([ox,oy,oz], i) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.35, 1.95), panelMat(removed.has(i)));
+      const m = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.35, 1.95), panelMat(editSelectedPanels.has(i)));
       const local = new THREE.Vector3(ox, oy, oz).applyQuaternion(piece.mesh.quaternion);
       m.position.copy(piece.mesh.position).add(local);
       m.rotation.copy(piece.mesh.rotation);
@@ -737,7 +743,7 @@ function buildEditPanels(piece) {
     });
   } else { // cone
     [[-1,1,1],[1,1,1],[-1,1,-1],[1,1,-1]].forEach(([ox,oy,oz], i) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(1.95, 1.95, 1.95), panelMat(removed.has(i)));
+      const m = new THREE.Mesh(new THREE.BoxGeometry(1.95, 1.95, 1.95), panelMat(editSelectedPanels.has(i)));
       const local = new THREE.Vector3(ox, oy, oz).applyQuaternion(piece.mesh.quaternion);
       m.position.copy(piece.mesh.position).add(local);
       m.rotation.copy(piece.mesh.rotation);
@@ -758,8 +764,7 @@ function clearEditPanels() {
 
 function applyEdit() {
   if (!editPiece) return;
-  const presets = getPresets(editPiece.type);
-  const removed = new Set(presets[editPreset].remove);
+  const removed = editSelectedPanels;
 
   if (editPiece.type === 'wall') {
     // Replace single mesh with up to 9 sub-panel boxes in a Group
@@ -769,7 +774,7 @@ function applyEdit() {
     group.rotation.copy(editPiece.mesh.rotation);
     const baseMat = pieceMat(editPiece.mat, 1);
     WALL_PANEL_OFFSETS.forEach(([ox, oy], i) => {
-      if (removed.has(i)) return;
+      if (editSelectedPanels.has(i)) return;
       const m = new THREE.Mesh(new THREE.BoxGeometry(WP - 0.05, WP - 0.05, 0.3), baseMat.clone());
       m.position.set(ox, oy, 0);
       m.castShadow = true;
@@ -800,8 +805,7 @@ function applyEdit() {
     }
   } else {
     // floor/ramp/cone: replace mesh with Group of non-removed sub-panels
-    const presets2 = getPresets(editPiece.type);
-    const removed2 = new Set(presets2[editPreset].remove);
+    const removed2 = editSelectedPanels;
     scene.remove(editPiece.mesh);
     const group2 = new THREE.Group();
     group2.position.copy(editPiece.mesh.position);
@@ -852,8 +856,9 @@ function applyEdit() {
 
 function cancelEdit() {
   clearEditPanels();
-  editMode  = false;
-  editPiece = null;
+  editMode           = false;
+  editPiece          = null;
+  editSelectedPanels = new Set();
 }
 
 // Build mode state
@@ -872,18 +877,103 @@ function rebuildGhost() {
   scene.add(ghostMesh);
 }
 
+// Returns true if a piece placed at (gx, gy, gz) has a valid support:
+// terrain below, an adjacent placed piece, or a building rooftop.
+function isSupported(gx, gy, gz) {
+  const terrainY = getTerrainY(gx, gz);
+  if (gy <= terrainY + GRID * 0.65) return true;
+
+  // Building roof surfaces
+  for (const surf of buildingSurfaces) {
+    const dx = Math.abs(surf.position.x - gx);
+    const dz = Math.abs(surf.position.z - gz);
+    const surfTop = surf.position.y + 0.25;
+    if (dx < GRID * 1.5 && dz < GRID * 1.5 && Math.abs(surfTop - gy) < GRID * 0.65) return true;
+  }
+
+  // Adjacent placed piece (within one grid cell in every axis)
+  for (const p of placedPieces) {
+    const dx = Math.abs(p.mesh.position.x - gx);
+    const dy = Math.abs(p.mesh.position.y - gy);
+    const dz = Math.abs(p.mesh.position.z - gz);
+    if (dx < GRID * 1.1 && dz < GRID * 1.1 && dy < GRID * 1.1) return true;
+  }
+
+  return false;
+}
+
+// Flood-fill from grounded pieces; remove any that have no path to ground.
+let pruning = false;
+function pruneUnsupported() {
+  if (placedPieces.length === 0 || pruning) return;
+  pruning = true;
+
+  const n = placedPieces.length;
+  const supported = new Set();
+
+  // Seed: pieces touching terrain or building rooftops
+  for (let i = 0; i < n; i++) {
+    const p = placedPieces[i];
+    const px = p.mesh.position.x, py = p.mesh.position.y, pz = p.mesh.position.z;
+    if (py <= getTerrainY(px, pz) + GRID * 0.65) { supported.add(i); continue; }
+    for (const surf of buildingSurfaces) {
+      const dx = Math.abs(surf.position.x - px);
+      const dz = Math.abs(surf.position.z - pz);
+      if (dx < GRID * 1.5 && dz < GRID * 1.5 && Math.abs((surf.position.y + 0.25) - py) < GRID * 0.65) {
+        supported.add(i); break;
+      }
+    }
+  }
+
+  // BFS: propagate support through adjacency
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let i = 0; i < n; i++) {
+      if (supported.has(i)) continue;
+      const p = placedPieces[i];
+      for (const j of supported) {
+        const other = placedPieces[j];
+        const dx = Math.abs(other.mesh.position.x - p.mesh.position.x);
+        const dy = Math.abs(other.mesh.position.y - p.mesh.position.y);
+        const dz = Math.abs(other.mesh.position.z - p.mesh.position.z);
+        if (dx < GRID * 1.1 && dz < GRID * 1.1 && dy < GRID * 1.1) { supported.add(i); changed = true; break; }
+      }
+    }
+  }
+
+  // Collect then destroy all unsupported pieces
+  const toDestroy = [];
+  for (let i = 0; i < n; i++) {
+    if (!supported.has(i)) toDestroy.push(placedPieces[i]);
+  }
+  toDestroy.forEach(p => destroyPiece(p));
+
+  pruning = false;
+}
+
 function updateGhost() {
   if (!buildMode || !ghostMesh) { if (ghostMesh) ghostMesh.visible = false; return; }
 
   const ray = new THREE.Raycaster();
-  ray.setFromCamera(new THREE.Vector2(0, 0), camera);
+  ray.setFromCamera(mouseNDC, camera);
 
-  const targets = [terrainMesh, ...placedPieces.map(p => p.mesh)];
+  // Only raycast against nearby placed pieces — checking all pieces every frame is expensive
+  const nearPieces = placedPieces.filter(p => {
+    const dx = p.mesh.position.x - camera.position.x;
+    const dz = p.mesh.position.z - camera.position.z;
+    return dx*dx + dz*dz < 900; // within 30 units
+  }).map(p => p.mesh);
+  const targets = [terrainMesh, ...nearPieces];
   const hits = ray.intersectObjects(targets, true);
 
   let gx, gy, gz, ry = 0;
 
   const hit = (hits.length && hits[0].distance <= 20) ? hits[0] : null;
+
+  // Player foot level — used to bias ramp Y snapping when elevated
+  const ph = player.crouching ? PLAYER_HEIGHT * 0.6 : PLAYER_HEIGHT;
+  const footY = camera.position.y - ph;
 
   if (hit) {
     if (buildType === 'wall') {
@@ -899,10 +989,39 @@ function updateGhost() {
       }
       gy = snapGrid(hit.point.y - 2) + 2;
     } else if (buildType === 'floor') {
-      gx = snapGrid(hit.point.x);
-      gz = snapGrid(hit.point.z);
-      gy = snapGrid(hit.point.y) + 0.15;
       ry = 0;
+      const terrainAtFloor = getTerrainY(camera.position.x, camera.position.z);
+      if (footY > terrainAtFloor + 0.5) {
+        // Elevated: snap X/Z forward, Y stays at current level
+        const fwdX = -Math.sin(player.yaw) * 2;
+        const fwdZ = -Math.cos(player.yaw) * 2;
+        gx = snapGrid(camera.position.x + fwdX);
+        gz = snapGrid(camera.position.z + fwdZ);
+        gy = snapGrid(footY) + 0.15;
+      } else if (hit.point.y > footY + 0.5) {
+        // Looking up at a ramp or wall above — snap floor to top of hit surface
+        gx = snapGrid(hit.point.x);
+        gz = snapGrid(hit.point.z);
+        gy = GRID * Math.ceil(hit.point.y / GRID) + 0.15;
+      } else {
+        gx = snapGrid(hit.point.x);
+        gz = snapGrid(hit.point.z);
+        gy = snapGrid(Math.max(hit.point.y, footY)) + 0.15;
+      }
+    } else if (buildType === 'ramp') {
+      gy = snapGrid(Math.max(hit.point.y, footY));
+      ry = Math.round(player.yaw / (Math.PI/2)) * (Math.PI/2);
+      // When elevated, snap X/Z to player-forward so staircase continues upward
+      const terrainAtPlayer = getTerrainY(camera.position.x, camera.position.z);
+      if (footY > terrainAtPlayer + 0.5) {
+        const fwdX = -Math.sin(player.yaw) * 2;
+        const fwdZ = -Math.cos(player.yaw) * 2;
+        gx = snapGrid(camera.position.x + fwdX);
+        gz = snapGrid(camera.position.z + fwdZ);
+      } else {
+        gx = snapGrid(hit.point.x);
+        gz = snapGrid(hit.point.z);
+      }
     } else {
       gx = snapGrid(hit.point.x);
       gz = snapGrid(hit.point.z);
@@ -910,13 +1029,15 @@ function updateGhost() {
       ry = Math.round(player.yaw / (Math.PI/2)) * (Math.PI/2);
     }
   } else {
-    // Fallback: place 8 units in front of player at ground level
+    // Fallback: place 8 units in front of player
     const fwdX = -Math.sin(player.yaw) * 8;
     const fwdZ = -Math.cos(player.yaw) * 8;
     gx = snapGrid(camera.position.x + fwdX);
     gz = snapGrid(camera.position.z + fwdZ);
     const groundY = getTerrainY(gx, gz);
-    gy = buildType === 'wall' ? snapGrid(groundY - 2) + 2 : groundY;
+    // For ramps, bias to foot level so staircase continues at correct height
+    const baseY = buildType === 'ramp' ? Math.max(groundY, footY) : groundY;
+    gy = buildType === 'wall' ? snapGrid(groundY - 2) + 2 : snapGrid(baseY);
     ry = buildType === 'wall' ? 0 : Math.round(player.yaw / (Math.PI/2)) * (Math.PI/2);
   }
 
@@ -925,10 +1046,15 @@ function updateGhost() {
   ghostMesh.position.set(gx, gy, gz);
   ghostMesh.rotation.y = ry;
   ghostMesh.visible = true;
+
+  // Tint ghost red if placement would be floating (no support)
+  const placementSupported = isSupported(gx, gy, gz);
+  ghostMesh.material.color.setHex(placementSupported ? MATERIALS_DEF[buildMat].color : 0xff3333);
 }
 
 function placePiece() {
   if (!buildMode || !ghostMesh || !ghostMesh.visible) return;
+  if (!isSupported(ghostMesh.position.x, ghostMesh.position.y, ghostMesh.position.z)) return;
 
   const mesh = new THREE.Mesh(getPieceGeo(buildType), pieceMat(buildMat, 1));
   mesh.position.copy(ghostMesh.position);
@@ -939,13 +1065,16 @@ function placePiece() {
 
   const bx = mesh.position.x, bz = mesh.position.z;
   const isXFacing = Math.abs(Math.sin(mesh.rotation.y)) > 0.7;
-  const envObj = buildType === 'wall'
-    ? (isXFacing
-        ? { x: bx, z: bz, w: 0.25, d: 2.15 }
-        : { x: bx, z: bz, w: 2.15, d: 0.25 })
-    : { x: bx, z: bz, w: 2.1, d: 2.1 };
-
-  envObjects.push(envObj);
+  // Only walls block horizontal movement; floors/ramps/cones are walkable surfaces
+  const envObjs = [];
+  if (buildType === 'wall') {
+    const wallMaxY = mesh.position.y + GRID / 2; // top of the 4-unit wall
+    const envObj = isXFacing
+      ? { x: bx, z: bz, w: 0.25, d: 2.15, maxY: wallMaxY }
+      : { x: bx, z: bz, w: 2.15, d: 0.25, maxY: wallMaxY };
+    envObjects.push(envObj);
+    envObjs.push(envObj);
+  }
 
   placedPieces.push({
     mesh,
@@ -953,7 +1082,7 @@ function placePiece() {
     maxHp: MATERIALS_DEF[buildMat].hp,
     type: buildType,
     mat: buildMat,
-    envObjs: [envObj],
+    envObjs,
     rotation: mesh.rotation.y,
   });
 }
@@ -999,29 +1128,32 @@ function addBuilding(x, z, seed) {
   const frontZ = z + doorSign * (d / 2);
   const backZ  = z - doorSign * (d / 2);
 
-  // Helper: add a wall panel, cast shadow, add to scene
+  // Helper: add a wall panel, cast shadow, add to scene, return mesh
   function addPanel(geo, px, py, pz, isInterior) {
     const m = new THREE.Mesh(geo, wallMat(isInterior));
     m.position.set(px, py, pz);
     m.castShadow = true;
     m.receiveShadow = true;
     scene.add(m);
+    return m;
   }
 
   const wallThick = 0.3;
   const midY = groundY + h / 2;   // vertical center of walls
 
+  const wallTopY = groundY + h; // top edge of all walls — used for height-aware collision
+
   // Left wall
   addPanel(new THREE.BoxGeometry(wallThick, h, d), x - w/2, midY, z, false);
-  envObjects.push({ x: x - w/2, z, w: wallThick/2, d: d/2 });
+  envObjects.push({ x: x - w/2, z, w: wallThick/2, d: d/2, maxY: wallTopY });
 
   // Right wall
   addPanel(new THREE.BoxGeometry(wallThick, h, d), x + w/2, midY, z, false);
-  envObjects.push({ x: x + w/2, z, w: wallThick/2, d: d/2 });
+  envObjects.push({ x: x + w/2, z, w: wallThick/2, d: d/2, maxY: wallTopY });
 
   // Back wall (full, no door)
   addPanel(new THREE.BoxGeometry(w, h, wallThick), x, midY, backZ, false);
-  envObjects.push({ x, z: backZ, w: w/2, d: wallThick/2 });
+  envObjects.push({ x, z: backZ, w: w/2, d: wallThick/2, maxY: wallTopY });
 
   // Front wall — top beam (above door gap)
   const beamH = h - doorH;
@@ -1042,7 +1174,7 @@ function addBuilding(x, z, seed) {
     frontZ,
     false
   );
-  envObjects.push({ x: x - doorW/2 - doorSideW/2, z: frontZ, w: doorSideW/2, d: wallThick/2 });
+  envObjects.push({ x: x - doorW/2 - doorSideW/2, z: frontZ, w: doorSideW/2, d: wallThick/2, maxY: wallTopY });
 
   // Front wall — right pier
   addPanel(
@@ -1052,18 +1184,19 @@ function addBuilding(x, z, seed) {
     frontZ,
     false
   );
-  envObjects.push({ x: x + doorW/2 + doorSideW/2, z: frontZ, w: doorSideW/2, d: wallThick/2 });
+  envObjects.push({ x: x + doorW/2 + doorSideW/2, z: frontZ, w: doorSideW/2, d: wallThick/2, maxY: wallTopY });
 
   // Floor (slightly above terrain, inset from walls)
   addPanel(new THREE.BoxGeometry(w - 0.6, 0.2, d - 0.6), x, groundY + 0.1, z, true);
   // floor gets no envObjects entry (player already snaps to terrain Y)
 
-  // Roof detail
+  // Roof detail — tracked in buildingSurfaces so player can stand on top
   const roofGeo = new THREE.BoxGeometry(w + 0.5, 0.4, d + 0.5);
   const roof = new THREE.Mesh(roofGeo, new THREE.MeshStandardMaterial({ color: 0x444444, roughness: 0.9, metalness: 0.1 }));
   roof.position.set(x, groundY + h + 0.2, z);
   roof.castShadow = true;
   scene.add(roof);
+  buildingSurfaces.push(roof);
 
   // Interior chest — placed against back wall, centered
   const chestGroup = new THREE.Group();
@@ -1569,6 +1702,9 @@ let isZoomed = false;
 const keys = {};
 document.addEventListener('keydown', e => { keys[e.code] = true; });
 document.addEventListener('keyup',   e => { keys[e.code] = false; });
+let mouseLeftDown = false;
+document.addEventListener('mousedown', e => { if (e.button === 0) mouseLeftDown = true; });
+document.addEventListener('mouseup',   e => { if (e.button === 0) mouseLeftDown = false; });
 // isAction declared here so it's after the keys object it depends on
 function isAction(action) { return !!keys[settings.binds[action]]; }
 
@@ -1597,7 +1733,7 @@ document.addEventListener('keydown', e => {
 document.addEventListener('keydown', e => {
   if (state.phase !== 'playing' || settingsOpen) return;
   if (e.code === settings.binds.build) {
-    if (editMode) return;
+    if (editMode) cancelEdit(); // exit edit mode before toggling build
     buildMode = !buildMode;
     if (buildMode) rebuildGhost();
     else if (ghostMesh) ghostMesh.visible = false;
@@ -1625,7 +1761,7 @@ document.addEventListener('keydown', e => {
       if (found) {
         editPiece  = found;
         editMode   = true;
-        editPreset = 0;
+        editSelectedPanels = new Set();
         buildEditPanels(editPiece);
       }
     }
@@ -1644,11 +1780,7 @@ document.addEventListener('keydown', e => {
 canvas.addEventListener('wheel', e => {
   if (state.phase !== 'playing' || settingsOpen) return;
   if (editMode && editPiece) {
-    const presets = getPresets(editPiece.type);
-    const dir = e.deltaY > 0 ? 1 : -1;
-    editPreset = (editPreset + dir + presets.length) % presets.length;
-    buildEditPanels(editPiece);
-    return;
+    return; // scroll does nothing in edit mode; click panels to toggle
   }
   if (!buildMode) return;
   const dir = e.deltaY > 0 ? 1 : -1;
@@ -1658,12 +1790,27 @@ canvas.addEventListener('wheel', e => {
 }, { passive: true });
 
 
+// Tracks mouse in NDC coords — (0,0) when pointer-locked (crosshair center),
+// actual cursor position otherwise (used for ghost raycasting in build mode).
+const mouseNDC = new THREE.Vector2(0, 0);
+
 // Mouse look
 document.addEventListener('mousemove', e => {
   if (state.phase !== 'playing') return;
-  player.yaw   -= e.movementX * 0.002 * settings.sensitivity;
-  player.pitch -= e.movementY * 0.002 * settings.sensitivity;
-  player.pitch  = Math.max(-Math.PI/2.2, Math.min(Math.PI/2.2, player.pitch));
+  if (document.pointerLockElement === canvas) {
+    // Pointer locked: camera moves, cursor stays at center
+    mouseNDC.set(0, 0);
+    player.yaw   -= e.movementX * 0.002 * settings.sensitivity;
+    player.pitch -= e.movementY * 0.002 * settings.sensitivity;
+    player.pitch  = Math.max(-Math.PI/2.2, Math.min(Math.PI/2.2, player.pitch));
+  } else {
+    // Free cursor: track position relative to canvas for ghost raycasting
+    const rect = canvas.getBoundingClientRect();
+    mouseNDC.set(
+      ((e.clientX - rect.left) / rect.width)  *  2 - 1,
+      ((e.clientY - rect.top)  / rect.height) * -2 + 1
+    );
+  }
 });
 
 // Pointer lock
@@ -1675,13 +1822,37 @@ document.addEventListener('pointerlockchange', () => {
     document.pointerLockElement === canvas ? 'block' : 'none';
 });
 
-// Shoot on click (or place piece in build mode)
+// Shoot on click (or place piece in build mode, or toggle edit panels)
 document.addEventListener('mousedown', e => {
-  if (e.button === 0 && state.phase === 'playing' &&
-      document.pointerLockElement === canvas) {
-    if (buildMode) { placePiece(); return; }
-    shoot();
+  if (e.button !== 0 || state.phase !== 'playing') return;
+  const locked = document.pointerLockElement === canvas;
+
+  // Build placement doesn't require pointer lock — ghost is always positioned correctly
+  if (buildMode) {
+    if (!locked) canvas.requestPointerLock(); // try to re-acquire for future actions
+    placePiece();
+    return;
   }
+
+  // Everything below requires pointer lock (needs mouse aim)
+  if (!locked) { canvas.requestPointerLock(); return; }
+
+  if (editMode && editPiece) {
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(new THREE.Vector2(0, 0), camera);
+    const hits = ray.intersectObjects(editPanels, false);
+    if (hits.length > 0) {
+      const idx = editPanels.indexOf(hits[0].object);
+      if (idx !== -1) {
+        if (editSelectedPanels.has(idx)) editSelectedPanels.delete(idx);
+        else editSelectedPanels.add(idx);
+        buildEditPanels(editPiece);
+      }
+    }
+    return;
+  }
+
+  shoot();
 });
 
 // Sniper zoom (RMB)
@@ -1951,6 +2122,24 @@ function loop(t) {
     updateDust(dt);
     updateLightning(dt);
     if (buildMode) updateGhost();
+    // Auto-fire: hold mouse to shoot continuously (fire rate gated by fireCooldown inside shoot())
+    if (mouseLeftDown && !buildMode && document.pointerLockElement === canvas) {
+      if (editMode && editPiece) {
+        // Hold to paint edit panels: continuously select whatever the crosshair is on
+        const ray = new THREE.Raycaster();
+        ray.setFromCamera(mouseNDC, camera);
+        const hits = ray.intersectObjects(editPanels, false);
+        if (hits.length > 0) {
+          const idx = editPanels.indexOf(hits[0].object);
+          if (idx !== -1 && !editSelectedPanels.has(idx)) {
+            editSelectedPanels.add(idx);
+            buildEditPanels(editPiece);
+          }
+        }
+      } else {
+        shoot();
+      }
+    }
     updateWorldWeapons(dt);
   }
   composer.render();
@@ -1996,8 +2185,27 @@ function updatePlayer(dt) {
   player.velY += GRAVITY * dt;
   camera.position.y += player.velY * dt;
 
-  // Terrain height
-  const groundY = getTerrainY(camera.position.x, camera.position.z) + height;
+  // Terrain height — also check placed piece surfaces and building roofs
+  let groundY = getTerrainY(camera.position.x, camera.position.z) + height;
+  const surfTargets = [];
+  placedPieces.forEach(p => {
+    const dx = p.mesh.position.x - camera.position.x;
+    const dz = p.mesh.position.z - camera.position.z;
+    if (dx*dx + dz*dz < 36) surfTargets.push(p.mesh);
+  });
+  buildingSurfaces.forEach(m => {
+    const dx = m.position.x - camera.position.x;
+    const dz = m.position.z - camera.position.z;
+    if (dx*dx + dz*dz < 2500) surfTargets.push(m); // buildings can be large
+  });
+  if (surfTargets.length > 0) {
+    const downRay = new THREE.Raycaster(camera.position.clone(), new THREE.Vector3(0, -1, 0));
+    const pieceHits = downRay.intersectObjects(surfTargets, true);
+    if (pieceHits.length > 0) {
+      const pieceGroundY = (camera.position.y - pieceHits[0].distance) + height;
+      if (pieceGroundY > groundY) groundY = pieceGroundY;
+    }
+  }
   if (camera.position.y <= groundY) {
     camera.position.y = groundY;
     player.velY = 0;
@@ -2022,7 +2230,10 @@ function getTerrainY(x, z) {
 }
 
 function checkWallCollision(nx, nz) {
+  const footY = camera.position.y - (player.crouching ? PLAYER_HEIGHT * 0.6 : PLAYER_HEIGHT);
   for (const obj of envObjects) {
+    // Skip if player feet are above the wall top (standing on roof or top of placed wall)
+    if (obj.maxY !== undefined && footY > obj.maxY - 0.1) continue;
     if (Math.abs(nx - obj.x) < obj.w + 0.4 && Math.abs(nz - obj.z) < obj.d + 0.4)
       return true;
   }
@@ -2154,7 +2365,7 @@ function runBotAI(bot, dt, distToPlayer) {
         nearestDist = d; nearest = other;
       }
     }
-    if (nearest && nearestDist < 15) {
+    if (nearest && nearestDist < 25) {
       bot.state = 'attack';
       bot.target = nearest;
     } else if (nearest) {
@@ -2220,7 +2431,7 @@ function runBotShooting(bot, dt, distToPlayer) {
   if (bot.target === 'player') {
     damagePlayer(WEAPONS[bot.weapon].damage * 0.6);
   } else if (bot.target && bot.target.alive) {
-    damageBot(bot.target, WEAPONS[bot.weapon].damage * 0.8);
+    damageBot(bot.target, WEAPONS[bot.weapon].damage * 2.5);
   }
 }
 
@@ -2311,6 +2522,8 @@ function destroyPiece(piece) {
   });
   const idx = placedPieces.indexOf(piece);
   if (idx !== -1) placedPieces.splice(idx, 1);
+  // Cascade: pieces that lost their support should also fall
+  pruneUnsupported();
 }
 
 function killBot(bot) {
@@ -2351,10 +2564,59 @@ function checkWinCondition() {
       state.level = Math.min(state.level + 1, 101);
       saveGame();
     }
-    const msg = state.level > 100 ? 'ENDLESS MODE UNLOCKED!' : `Level ${state.level - 1} complete!`;
-    const btn1 = state.level > 100 ? 'ENDLESS MODE' : `LEVEL ${state.level}`;
-    showOverlay('VICTORY!', msg, btn1, 'MAIN MENU');
+    showWinScreen();
   }
+}
+
+function showWinScreen() {
+  const ov = document.getElementById('overlay');
+  const nextBtn = state.level > 100 ? 'ENDLESS MODE' : `LEVEL ${state.level}`;
+  const subMsg  = state.level > 100 ? 'ENDLESS MODE UNLOCKED!' : `Level ${state.level - 1} complete!`;
+  ov.innerHTML = `
+    <div style="display:flex;flex-direction:column;align-items:center;gap:0;">
+      <div style="
+        width:110px;height:110px;border-radius:50%;
+        background:linear-gradient(145deg,#ffe066,#f0a000);
+        border:5px solid #fff8;
+        display:flex;align-items:center;justify-content:center;
+        box-shadow:0 0 40px #f0c04099,0 0 80px #f0c04044;
+        font-size:3.8em;font-weight:900;color:#fff;
+        text-shadow:0 2px 8px #0008;
+        margin-bottom:0.35em;
+        animation:winPulse 1.4s ease-in-out infinite alternate;
+      ">#1</div>
+      <h1 style="
+        font-size:3em;letter-spacing:0.08em;
+        background:linear-gradient(90deg,#ffe066,#fff,#ffe066);
+        -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+        margin:0 0 0.15em;text-shadow:none;
+      ">VICTORY ROYALE</h1>
+      <p style="color:#ccc;font-size:1.1em;margin:0 0 0.5em;">${subMsg}</p>
+      <p style="color:#f0c040;font-size:1em;margin:0 0 1.4em;">
+        ${state.kills} elimination${state.kills !== 1 ? 's' : ''}
+      </p>
+      <div>
+        <button class="btn" id="winBtn1">${nextBtn}</button>
+        <button class="btn" id="winBtn2" style="background:#555;color:#fff;">MAIN MENU</button>
+      </div>
+    </div>
+    <style>
+      @keyframes winPulse {
+        from { box-shadow:0 0 30px #f0c04088,0 0 60px #f0c04033; }
+        to   { box-shadow:0 0 55px #f0c040cc,0 0 100px #f0c04066; }
+      }
+    </style>
+  `;
+  ov.style.display = 'flex';
+  document.getElementById('winBtn1').addEventListener('click', () => {
+    ov.style.display = 'none';
+    if (state.level > 100) startGame(true);
+    else startGame(false);
+  });
+  document.getElementById('winBtn2').addEventListener('click', () => {
+    ov.innerHTML = getMainMenuHTML();
+    bindMainMenuButtons();
+  });
 }
 
 function showOverlay(title, msg, btn1, btn2) {
