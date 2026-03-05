@@ -466,8 +466,8 @@ resize();
 const sun = new THREE.DirectionalLight(0xfff8e7, 1.4);
 sun.position.set(100, 200, 80);
 sun.castShadow = true;
-sun.shadow.mapSize.width  = 2048;
-sun.shadow.mapSize.height = 2048;
+sun.shadow.mapSize.width  = 1024;
+sun.shadow.mapSize.height = 1024;
 sun.shadow.camera.near = 0.5;
 sun.shadow.camera.far  = 600;
 sun.shadow.camera.left = sun.shadow.camera.bottom = -300;
@@ -770,7 +770,7 @@ function buildEditPanels(piece) {
     });
   } else if (piece.type === 'ramp') {
     // Panels sit on the slope surface (y = 2 - z in local), tilted -45° around local X
-    const rampTilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), -Math.PI/4);
+    const rampTilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), Math.PI/4);
     [[-1,3,-1],[1,3,-1],[-1,1,1],[1,1,1]].forEach(([ox,oy,oz], i) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.08, 1.95 * Math.SQRT2), panelMat(editSelectedPanels.has(i)));
       const local = new THREE.Vector3(ox, oy, oz).applyQuaternion(piece.mesh.quaternion);
@@ -880,7 +880,7 @@ function applyEdit() {
         if (removed2.has(i)) return;
         const m = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.3, 1.95 * Math.SQRT2), baseMat2.clone());
         m.position.set(ox, oy, oz);
-        m.rotation.x = -Math.PI / 4;
+        m.rotation.x = Math.PI / 4;
         m.castShadow = true;
         group2.add(m);
       });
@@ -1021,10 +1021,12 @@ function pruneUnsupported() {
   pruning = false;
 }
 
+const _ghostRay = new THREE.Raycaster(); // pre-allocated, reused every frame
+
 function updateGhost() {
   if (!buildMode || !ghostMesh) { if (ghostMesh) ghostMesh.visible = false; return; }
 
-  const ray = new THREE.Raycaster();
+  const ray = _ghostRay;
   ray.setFromCamera(mouseNDC, camera);
 
   // Only raycast against nearby placed pieces — checking all pieces every frame is expensive
@@ -2371,11 +2373,16 @@ function updatePlayer(dt) {
   if (player.fireCooldown > 0) player.fireCooldown -= dt;
 }
 
+// Pre-allocated objects to avoid per-call GC pressure
+const _terrainRayOrigin = new THREE.Vector3();
+const _terrainRayDir    = new THREE.Vector3(0, -1, 0);
+const _terrainRaycaster = new THREE.Raycaster();
+_terrainRaycaster.far   = 120;
+
 function getTerrainY(x, z) {
-  const ray = new THREE.Raycaster(
-    new THREE.Vector3(x, 50, z), new THREE.Vector3(0, -1, 0)
-  );
-  const hits = ray.intersectObject(terrainMesh);
+  _terrainRayOrigin.set(x, 50, z);
+  _terrainRaycaster.set(_terrainRayOrigin, _terrainRayDir);
+  const hits = _terrainRaycaster.intersectObject(terrainMesh);
   return hits.length ? hits[0].point.y : 0;
 }
 
@@ -2411,9 +2418,10 @@ function updateBots(dt) {
     const pp  = camera.position;
     const dx  = pp.x - bot.x;
     const dz  = pp.z - bot.z;
-    const distToPlayer = Math.sqrt(dx*dx + dz*dz);
+    const distSq = dx*dx + dz*dz;
+    const distToPlayer = Math.sqrt(distSq);
 
-    if (distToPlayer > BOT_GHOST_R) {
+    if (distSq > BOT_GHOST_R * BOT_GHOST_R) {
       bot.x += (Math.random()-0.5) * 0.5;
       bot.z += (Math.random()-0.5) * 0.5;
       continue;
@@ -2443,8 +2451,13 @@ function updateBots(dt) {
       });
     }
 
-    const groundY = getTerrainY(bot.x, bot.z);
-    bot.y = groundY;
+    // Cache terrain Y — only re-raycast when bot moves >0.5 units (saves ~90 raycasts/frame)
+    const moveDist = (bot.x - (bot._cachedTX ?? bot.x + 99)) ** 2 + (bot.z - (bot._cachedTZ ?? bot.z + 99)) ** 2;
+    if (moveDist > 0.25) {
+      bot._cachedTX = bot.x; bot._cachedTZ = bot.z;
+      bot._cachedTY = getTerrainY(bot.x, bot.z);
+    }
+    bot.y = bot._cachedTY ?? 0;
 
     // Walk cycle speed
     const isMoving = bot.state === 'chase' || bot.state === 'flee' || bot.state === 'patrol';
