@@ -623,7 +623,7 @@ function createConeGeo() {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(new Float32Array([
     -2,0, 2,   2,0, 2,   2,0,-2,  -2,0,-2,
-     0,4, 0,
+     0,2, 0,
   ]), 3));
   g.setIndex([0,2,1, 0,3,2, 0,1,4, 1,2,4, 2,3,4, 3,0,4]);
   g.computeVertexNormals();
@@ -769,19 +769,33 @@ function buildEditPanels(piece) {
       editPanels.push(m);
     });
   } else if (piece.type === 'ramp') {
-    [[-1,2,-1],[1,2,-1],[-1,0,1],[1,0,1]].forEach(([ox,oy,oz], i) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.35, 1.95), panelMat(editSelectedPanels.has(i)));
+    // Panels sit on the slope surface (y = 2 - z in local), tilted -45° around local X
+    const rampTilt = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1,0,0), -Math.PI/4);
+    [[-1,3,-1],[1,3,-1],[-1,1,1],[1,1,1]].forEach(([ox,oy,oz], i) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.35, 1.95 * Math.SQRT2), panelMat(editSelectedPanels.has(i)));
       const local = new THREE.Vector3(ox, oy, oz).applyQuaternion(piece.mesh.quaternion);
       m.position.copy(piece.mesh.position).add(local);
-      m.rotation.copy(piece.mesh.rotation);
+      m.quaternion.copy(piece.mesh.quaternion.clone().multiply(rampTilt));
       scene.add(m);
       editPanels.push(m);
     });
   } else { // cone
-    [[-1,1,1],[1,1,1],[-1,1,-1],[1,1,-1]].forEach(([ox,oy,oz], i) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(1.95, 1.95, 1.95), panelMat(editSelectedPanels.has(i)));
-      const local = new THREE.Vector3(ox, oy, oz).applyQuaternion(piece.mesh.quaternion);
-      m.position.copy(piece.mesh.position).add(local);
+    // Triangular face panels matching the half-height cone's actual face geometry
+    const CONE_FACE_VERTS = [
+      [-2,0,2, 2,0,2, 0,2,0],    // 0: front face (FL)
+      [2,0,2, 2,0,-2, 0,2,0],    // 1: right face (FR)
+      [2,0,-2, -2,0,-2, 0,2,0],  // 2: back face (BR)
+      [-2,0,-2, -2,0,2, 0,2,0],  // 3: left face (BL)
+    ];
+    CONE_FACE_VERTS.forEach((verts, i) => {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+      g.setIndex([0,1,2]);
+      g.computeVertexNormals();
+      const mat = panelMat(editSelectedPanels.has(i));
+      mat.side = THREE.DoubleSide;
+      const m = new THREE.Mesh(g, mat);
+      m.position.copy(piece.mesh.position);
       m.rotation.copy(piece.mesh.rotation);
       scene.add(m);
       editPanels.push(m);
@@ -837,7 +851,7 @@ function applyEdit() {
       // Use WP/2 - 0.2 so door/window corridors are comfortably wide:
       // adjacent-panel AABB block range = 0.467 + 0.4 = 0.867, giving
       // 1.333 - 0.867 = 0.467 clearance (0.93-unit walkable corridor).
-      const hw = WP / 2 - 0.2; // horizontal half-width
+      const hw = 0.25; // horizontal half-width (narrow so door gaps are passable)
       const obj = isZFacing
         ? { x: bx + ox, z: bz,      w: hw,  d: 0.15, minY: panelMinY, maxY: panelMaxY }
         : { x: bx,      z: bz + ox, w: 0.15, d: hw,  minY: panelMinY, maxY: panelMaxY };
@@ -862,18 +876,31 @@ function applyEdit() {
         group2.add(m);
       });
     } else if (editPiece.type === 'ramp') {
-      [[-1,2,-1],[1,2,-1],[-1,0,1],[1,0,1]].forEach(([ox,oy,oz], i) => {
+      [[-1,3,-1],[1,3,-1],[-1,1,1],[1,1,1]].forEach(([ox,oy,oz], i) => {
         if (removed2.has(i)) return;
-        const m = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.3, 1.95), baseMat2.clone());
+        const m = new THREE.Mesh(new THREE.BoxGeometry(1.95, 0.3, 1.95 * Math.SQRT2), baseMat2.clone());
         m.position.set(ox, oy, oz);
+        m.rotation.x = -Math.PI / 4;
         m.castShadow = true;
         group2.add(m);
       });
     } else { // cone
-      [[-1,1,1],[1,1,1],[-1,1,-1],[1,1,-1]].forEach(([ox,oy,oz], i) => {
+      const CONE_FACE_VERTS2 = [
+        [-2,0,2, 2,0,2, 0,2,0],
+        [2,0,2, 2,0,-2, 0,2,0],
+        [2,0,-2, -2,0,-2, 0,2,0],
+        [-2,0,-2, -2,0,2, 0,2,0],
+      ];
+      CONE_FACE_VERTS2.forEach((verts, i) => {
         if (removed2.has(i)) return;
-        const m = new THREE.Mesh(new THREE.BoxGeometry(1.95, 1.95, 1.95), baseMat2.clone());
-        m.position.set(ox, oy, oz);
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(verts), 3));
+        g.setIndex([0,1,2]);
+        g.computeVertexNormals();
+        const mat = baseMat2.clone();
+        mat.side = THREE.DoubleSide;
+        const m = new THREE.Mesh(g, mat);
+        m.position.set(0, 0, 0);
         m.castShadow = true;
         group2.add(m);
       });
