@@ -531,27 +531,83 @@ const concreteTex = makeCanvasTexture(512, (ctx, s) => {
 concreteTex.repeat.set(3, 3);
 
 const barkTex = makeCanvasTexture(256, (ctx, s) => {
-  ctx.fillStyle = '#6B3A2A';
+  // Gradient base — slightly darker on edges to fake cylinder shading
+  const bg = ctx.createLinearGradient(0, 0, s, 0);
+  bg.addColorStop(0,   '#3a2015');
+  bg.addColorStop(0.25,'#6B3A2A');
+  bg.addColorStop(0.75,'#6B3A2A');
+  bg.addColorStop(1,   '#3a2015');
+  ctx.fillStyle = bg;
   ctx.fillRect(0, 0, s, s);
-  // Vertical streaks
-  for (let i = 0; i < 60; i++) {
-    const x = Math.random() * s;
-    const w = 1 + Math.random() * 4;
-    const dark = Math.random() > 0.5;
-    ctx.fillStyle = dark ? 'rgba(0,0,0,0.2)' : 'rgba(255,200,150,0.12)';
-    ctx.fillRect(x, 0, w, s);
+  // Deep wavy vertical grooves
+  for (let i = 0; i < 14; i++) {
+    const bx = (i / 14) * s + (Math.random() - 0.5) * 12;
+    ctx.strokeStyle = `rgba(0,0,0,${0.25 + Math.random() * 0.2})`;
+    ctx.lineWidth = 1.5 + Math.random() * 2.5;
+    ctx.beginPath();
+    ctx.moveTo(bx, 0);
+    for (let yy = 0; yy <= s; yy += 18) {
+      ctx.lineTo(bx + (Math.random() - 0.5) * 10, yy);
+    }
+    ctx.stroke();
+  }
+  // Thin light highlight streaks
+  for (let i = 0; i < 25; i++) {
+    const bx = Math.random() * s;
+    ctx.fillStyle = `rgba(255,200,150,${0.05 + Math.random() * 0.09})`;
+    ctx.fillRect(bx, 0, 1 + Math.random() * 2, s);
+  }
+  // Horizontal ridges / growth rings
+  for (let i = 0; i < 18; i++) {
+    const by = Math.random() * s;
+    ctx.strokeStyle = `rgba(0,0,0,${0.1 + Math.random() * 0.18})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, by);
+    for (let xx = 0; xx <= s; xx += 14) {
+      ctx.lineTo(xx, by + (Math.random() - 0.5) * 5);
+    }
+    ctx.stroke();
+  }
+  // Bark knots
+  for (let i = 0; i < 4; i++) {
+    const kx = Math.random() * s, ky = Math.random() * s;
+    for (let ring = 4; ring > 0; ring--) {
+      ctx.strokeStyle = `rgba(0,0,0,${0.07 * ring})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.ellipse(kx, ky, ring * 5, ring * 3, 0.3, 0, Math.PI * 2);
+      ctx.stroke();
+    }
   }
 });
-barkTex.repeat.set(1, 2);
+barkTex.repeat.set(1, 3);
 
 const leavesTex = makeCanvasTexture(256, (ctx, s) => {
-  ctx.fillStyle = '#2d6e2d';
+  // Dark base
+  ctx.fillStyle = '#173d17';
   ctx.fillRect(0, 0, s, s);
-  for (let i = 0; i < 200; i++) {
-    const x = Math.random()*s, y = Math.random()*s;
-    const r = 6 + Math.random()*14;
-    ctx.fillStyle = `hsl(120,${35+Math.random()*20}%,${22+Math.random()*15}%)`;
-    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI*2); ctx.fill();
+  // Dense small leaf blobs — varied greens
+  for (let i = 0; i < 500; i++) {
+    const x = Math.random() * s, y = Math.random() * s;
+    const r = 2 + Math.random() * 7;
+    const hue = 108 + Math.random() * 28;
+    const sat = 38 + Math.random() * 28;
+    const lit = 16 + Math.random() * 22;
+    ctx.fillStyle = `hsl(${hue},${sat}%,${lit}%)`;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  // Large dark shadow clumps
+  for (let i = 0; i < 40; i++) {
+    const x = Math.random() * s, y = Math.random() * s;
+    ctx.fillStyle = `rgba(0,15,0,${0.2 + Math.random() * 0.18})`;
+    ctx.beginPath(); ctx.arc(x, y, 10 + Math.random() * 18, 0, Math.PI * 2); ctx.fill();
+  }
+  // Sun-catching highlight specks
+  for (let i = 0; i < 100; i++) {
+    const x = Math.random() * s, y = Math.random() * s;
+    ctx.fillStyle = `rgba(160,255,80,${0.07 + Math.random() * 0.13})`;
+    ctx.beginPath(); ctx.arc(x, y, 1.5 + Math.random() * 4, 0, Math.PI * 2); ctx.fill();
   }
 });
 leavesTex.repeat.set(2, 2);
@@ -1363,19 +1419,37 @@ function addTree(x, z, seed) {
   const h = 3 + seededRand(seed) * 5;
   const y = placeOnTerrain(x, z);
 
-  const trunkGeo = new THREE.CylinderGeometry(0.2, 0.35, h, 7);
+  // Trunk — slightly tapered, random yaw rotation for texture variety
+  const trunkGeo = new THREE.CylinderGeometry(0.15, 0.38, h, 8);
   const trunkMat = new THREE.MeshStandardMaterial({ color: 0x6B3A2A, map: barkTex, roughness: 0.95, metalness: 0.0 });
   const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-  trunk.position.set(x, y + h/2, z);
+  trunk.position.set(x, y + h / 2, z);
+  trunk.rotation.y = seededRand(seed + 6) * Math.PI * 2;
   trunk.castShadow = true;
   scene.add(trunk);
 
-  const leavesGeo = new THREE.ConeGeometry(1.8 + seededRand(seed+1)*1.2, h*1.2, 8);
-  const leavesMat = new THREE.MeshStandardMaterial({ color: 0x3a8a3a, map: leavesTex, roughness: 0.88, metalness: 0.0 });
-  const leaves = new THREE.Mesh(leavesGeo, leavesMat);
-  leaves.position.set(x, y + h + h*0.4, z);
-  leaves.castShadow = true;
-  scene.add(leaves);
+  // Per-tree foliage color — subtle hue/lightness shift (yellow-green to blue-green)
+  const leafHue = 0.30 + seededRand(seed + 7) * 0.07;
+  const leafLit = 0.20 + seededRand(seed + 8) * 0.10;
+  const leafColor = new THREE.Color().setHSL(leafHue, 0.55, leafLit);
+  const leavesMat = new THREE.MeshStandardMaterial({ color: leafColor, map: leavesTex, roughness: 0.88, metalness: 0.0 });
+
+  const baseR = 1.5 + seededRand(seed + 1) * 1.1;
+
+  // 3-tier stacked pine canopy
+  const tiers = [
+    { r: baseR,        th: h * 0.70, yOff: h * 0.50 },
+    { r: baseR * 0.72, th: h * 0.58, yOff: h * 0.88 },
+    { r: baseR * 0.42, th: h * 0.46, yOff: h * 1.20 },
+  ];
+  tiers.forEach(({ r, th, yOff }, i) => {
+    const geo = new THREE.ConeGeometry(r, th, 7);
+    const m = new THREE.Mesh(geo, leavesMat);
+    m.position.set(x, y + yOff, z);
+    m.rotation.y = seededRand(seed + 10 + i) * Math.PI;
+    m.castShadow = true;
+    scene.add(m);
+  });
 
   envObjects.push({ x, z, w: 0.5, d: 0.5 });
 }
