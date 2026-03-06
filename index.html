@@ -614,7 +614,8 @@ function createRampGeo() {
     -2,0, 2,   2,0, 2,   2,0,-2,  -2,0,-2,
     -2,4,-2,   2,4,-2,
   ]), 3));
-  g.setIndex([0,2,1, 0,3,2, 0,1,5, 0,5,4, 3,4,5, 3,5,2, 0,3,4, 1,2,5]);
+  // No bottom face — open underneath like Fortnite ramps
+  g.setIndex([0,1,5, 0,5,4, 3,4,5, 3,5,2, 0,3,4, 1,2,5]);
   g.computeVertexNormals();
   return g;
 }
@@ -1046,7 +1047,15 @@ function updateGhost() {
   const ph = player.crouching ? PLAYER_HEIGHT * 0.6 : PLAYER_HEIGHT;
   const footY = camera.position.y - ph;
 
-  if (hit) {
+  if (buildType === 'ramp') {
+    // Ramp always locks forward at foot level — never above player (Fortnite-style)
+    ry = Math.round(player.yaw / (Math.PI/2)) * (Math.PI/2);
+    const rfwdX = -Math.sin(ry);
+    const rfwdZ = -Math.cos(ry);
+    gx = snapGrid(camera.position.x + rfwdX * GRID);
+    gz = snapGrid(camera.position.z + rfwdZ * GRID);
+    gy = snapGrid(footY);
+  } else if (hit) {
     if (buildType === 'wall') {
       // Stable orientation from player yaw (avoids terrain-normal flickering).
       // Face-snap the perpendicular axis so walls align to cell edges, not cell
@@ -1086,20 +1095,6 @@ function updateGhost() {
         gz = snapGrid(hit.point.z);
         gy = snapGrid(Math.max(hit.point.y, footY)) + 0.15;
       }
-    } else if (buildType === 'ramp') {
-      gy = snapGrid(Math.max(hit.point.y, footY));
-      ry = Math.round(player.yaw / (Math.PI/2)) * (Math.PI/2);
-      // When elevated, snap X/Z to player-forward so staircase continues upward
-      const terrainAtPlayer = getTerrainY(camera.position.x, camera.position.z);
-      if (footY > terrainAtPlayer + 0.5) {
-        const fwdX = -Math.sin(player.yaw) * 2;
-        const fwdZ = -Math.cos(player.yaw) * 2;
-        gx = snapGrid(camera.position.x + fwdX);
-        gz = snapGrid(camera.position.z + fwdZ);
-      } else {
-        gx = snapGrid(hit.point.x);
-        gz = snapGrid(hit.point.z);
-      }
     } else {
       gx = snapGrid(hit.point.x);
       gz = snapGrid(hit.point.z);
@@ -1122,35 +1117,35 @@ function updateGhost() {
       gx = snapGrid(camera.position.x + fwdX);
       gz = snapGrid(camera.position.z + fwdZ);
       const groundY = getTerrainY(gx, gz);
-      const baseY = buildType === 'ramp' ? Math.max(groundY, footY) : groundY;
-      gy = snapGrid(baseY);
+      gy = snapGrid(groundY);
       ry = baseRyFb;
     }
   }
 
   ry += buildRot * (Math.PI / 2);
 
-  // Clamp ghost to max build distance (GRID*2). If the snapped position is
-  // further away, project it back onto the max-distance circle and re-snap.
-  const _maxDist = GRID * 2;
-  const _bdx = gx - camera.position.x, _bdz = gz - camera.position.z;
-  const _bDistSq = _bdx * _bdx + _bdz * _bdz;
-  if (_bDistSq > _maxDist * _maxDist) {
-    const _scale = _maxDist / Math.sqrt(_bDistSq);
-    const _cx = camera.position.x + _bdx * _scale;
-    const _cz = camera.position.z + _bdz * _scale;
-    const _isXF = Math.abs(Math.sin(ry)) > 0.7;
-    if (buildType === 'wall') {
-      gx = _isXF ? snapFace(_cx) : snapGrid(_cx);
-      gz = _isXF ? snapGrid(_cz) : snapFace(_cz);
-      gy = getTerrainY(gx, gz) + 2;
-    } else {
-      gx = snapGrid(_cx);
-      gz = snapGrid(_cz);
-      const _tg = getTerrainY(gx, gz);
-      if (buildType === 'floor')     gy = snapGrid(Math.max(_tg, footY)) + 0.15;
-      else if (buildType === 'ramp') gy = snapGrid(Math.max(_tg, footY));
-      else                           gy = snapGrid(_tg);
+  // Clamp non-ramp ghost to max build distance (GRID*2).
+  // Ramps are always exactly one grid cell forward so no clamping needed.
+  if (buildType !== 'ramp') {
+    const _maxDist = GRID * 2;
+    const _bdx = gx - camera.position.x, _bdz = gz - camera.position.z;
+    const _bDistSq = _bdx * _bdx + _bdz * _bdz;
+    if (_bDistSq > _maxDist * _maxDist) {
+      const _scale = _maxDist / Math.sqrt(_bDistSq);
+      const _cx = camera.position.x + _bdx * _scale;
+      const _cz = camera.position.z + _bdz * _scale;
+      const _isXF = Math.abs(Math.sin(ry)) > 0.7;
+      if (buildType === 'wall') {
+        gx = _isXF ? snapFace(_cx) : snapGrid(_cx);
+        gz = _isXF ? snapGrid(_cz) : snapFace(_cz);
+        gy = getTerrainY(gx, gz) + 2;
+      } else {
+        gx = snapGrid(_cx);
+        gz = snapGrid(_cz);
+        const _tg = getTerrainY(gx, gz);
+        if (buildType === 'floor') gy = snapGrid(Math.max(_tg, footY)) + 0.15;
+        else                       gy = snapGrid(_tg);
+      }
     }
   }
 
