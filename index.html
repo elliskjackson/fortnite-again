@@ -2611,17 +2611,17 @@ function runBotShooting(bot, dt, distToPlayer) {
     damagePlayer(WEAPONS[bot.weapon].damage * 0.6);
     spawnTracer(fromPos, camera.position.clone(), 0xff4422); // red-orange → player
   } else if (bot.target && bot.target.alive) {
-    damageBot(bot.target, WEAPONS[bot.weapon].damage * 2.5);
+    damageBot(bot.target, WEAPONS[bot.weapon].damage * 2.5, false);
     const toPos = new THREE.Vector3(bot.target.x, bot.target.y + 1.4, bot.target.z);
     spawnTracer(fromPos, toPos, 0xffaa00); // yellow-orange → other bot
   }
 }
 
-function damageBot(bot, dmg) {
+function damageBot(bot, dmg, byPlayer = true) {
   if (!bot.alive) return;
   bot.hp -= dmg;
   bot.hitFlash = 0.2;
-  if (bot.hp <= 0) killBot(bot);
+  if (bot.hp <= 0) killBot(bot, byPlayer);
 }
 
 const WEAPON_LOOT_COLORS = {
@@ -2708,7 +2708,7 @@ function destroyPiece(piece) {
   pruneUnsupported();
 }
 
-function killBot(bot) {
+function killBot(bot, byPlayer = true) {
   bot.alive = false;
   bot.deathTimer = 2;
   spawnLoot(bot.x, bot.y, bot.z, bot.weapon || 'pistol');
@@ -2718,7 +2718,7 @@ function killBot(bot) {
     m.material.transparent = true;
     m.material.userData.baseColor = baseColor;
   });
-  state.kills++;
+  if (byPlayer) state.kills++;
   checkWinCondition();
 }
 
