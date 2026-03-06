@@ -1077,15 +1077,19 @@ function updateGhost() {
       gy = Math.max(snapGrid(hit.point.y - 2) + 2, terrainAtWall + 2);
     } else if (buildType === 'floor') {
       ry = 0;
-      // X/Z always from crosshair so ghost follows where you aim
-      gx = snapGrid(hit.point.x);
-      gz = snapGrid(hit.point.z);
-      // Y: when elevated snap to current standing level (connects to adjacent
-      // pieces flat); on the ground just snap to the crosshair hit Y
       const terrainAtCam = getTerrainY(camera.position.x, camera.position.z);
       if (footY > terrainAtCam + 0.5) {
+        // Elevated: project crosshair direction horizontally — one grid cell
+        // forward at foot level. Consistent, never jumps to distant hit points.
+        const rd2 = ray.ray.direction;
+        const hLen2 = Math.sqrt(rd2.x * rd2.x + rd2.z * rd2.z) || 1;
+        gx = snapGrid(camera.position.x + (rd2.x / hLen2) * GRID);
+        gz = snapGrid(camera.position.z + (rd2.z / hLen2) * GRID);
         gy = snapGrid(footY) + 0.15;
       } else {
+        // On ground: follow crosshair hit
+        gx = snapGrid(hit.point.x);
+        gz = snapGrid(hit.point.z);
         gy = snapGrid(hit.point.y) + 0.15;
       }
     } else {
@@ -1170,6 +1174,14 @@ function updateGhost() {
 function placePiece() {
   if (!buildMode || !ghostMesh || !ghostMesh.visible) return;
   if (!isSupported(ghostMesh.position.x, ghostMesh.position.y, ghostMesh.position.z)) return;
+
+  // Prevent stacking duplicates on the same grid cell (hold-to-build guard)
+  const gp = ghostMesh.position;
+  for (const p of placedPieces) {
+    if (Math.abs(p.mesh.position.x - gp.x) < GRID * 0.3 &&
+        Math.abs(p.mesh.position.y - gp.y) < GRID * 0.3 &&
+        Math.abs(p.mesh.position.z - gp.z) < GRID * 0.3) return;
+  }
 
   const mesh = new THREE.Mesh(getPieceGeo(buildType), pieceMat(buildMat, 1));
   mesh.position.copy(ghostMesh.position);
