@@ -1077,24 +1077,9 @@ function updateGhost() {
       gy = Math.max(snapGrid(hit.point.y - 2) + 2, terrainAtWall + 2);
     } else if (buildType === 'floor') {
       ry = 0;
-      const terrainAtFloor = getTerrainY(camera.position.x, camera.position.z);
-      if (footY > terrainAtFloor + 0.5) {
-        // Elevated: snap X/Z forward, Y stays at current level
-        const fwdX = -Math.sin(player.yaw) * 2;
-        const fwdZ = -Math.cos(player.yaw) * 2;
-        gx = snapGrid(camera.position.x + fwdX);
-        gz = snapGrid(camera.position.z + fwdZ);
-        gy = snapGrid(footY) + 0.15;
-      } else if (hit.point.y > footY + 0.5 && player.pitch > 0.15) {
-        // Explicitly looking upward at a ramp/wall above — snap floor to top of hit surface
-        gx = snapGrid(hit.point.x);
-        gz = snapGrid(hit.point.z);
-        gy = GRID * Math.ceil(hit.point.y / GRID) + 0.15;
-      } else {
-        gx = snapGrid(hit.point.x);
-        gz = snapGrid(hit.point.z);
-        gy = snapGrid(Math.max(hit.point.y, footY)) + 0.15;
-      }
+      gx = snapGrid(hit.point.x);
+      gz = snapGrid(hit.point.z);
+      gy = snapGrid(hit.point.y) + 0.15;
     } else {
       gx = snapGrid(hit.point.x);
       gz = snapGrid(hit.point.z);
