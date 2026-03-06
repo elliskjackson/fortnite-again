@@ -2329,6 +2329,8 @@ function spawnBots() {
       target: null,
       deathTimer: 0,
       walkPhase: rng(i*4+3) * Math.PI * 2,
+      strafeDir: (rng(i*4+3) > 0.5 ? 1 : -1),
+      strafeTimer: 0,
     });
   }
   state.botsAlive = NUM_BOTS;
@@ -2563,20 +2565,19 @@ function updateBots(dt) {
     bot.y = bot._cachedTY ?? 0;
 
     // Walk cycle speed
-    const isMoving = bot.state === 'chase' || bot.state === 'flee' || bot.state === 'patrol';
+    const isMoving = bot.state === 'chase' || bot.state === 'flee' || bot.state === 'patrol' || bot.state === 'attack';
     bot.walkPhase += dt * (isMoving ? 4.5 : 1.5);
 
     const p = bot.parts;
 
+    bot.mesh.position.set(bot.x, bot.y, bot.z);
     if (bot.state === 'attack') {
-      // Crouch + raise arms to aim
-      bot.mesh.position.set(bot.x, bot.y - 0.3, bot.z);
+      // Stand upright, arms raised to aim, legs strafe-walking
       p.leftArmPivot.rotation.x  = -0.9;
       p.rightArmPivot.rotation.x = -0.9;
-      p.leftLegPivot.rotation.x  = 0;
-      p.rightLegPivot.rotation.x = 0;
+      p.leftLegPivot.rotation.x  = -Math.sin(bot.walkPhase) * 0.4;
+      p.rightLegPivot.rotation.x =  Math.sin(bot.walkPhase) * 0.4;
     } else {
-      bot.mesh.position.set(bot.x, bot.y, bot.z);
       const legAmp = bot.state === 'flee' ? 0.65 : (isMoving ? 0.55 : 0.10);
       const armAmp = bot.state === 'flee' ? 0.40 : (isMoving ? 0.35 : 0.06);
       p.leftLegPivot.rotation.x  = -Math.sin(bot.walkPhase) * legAmp;
@@ -2665,9 +2666,9 @@ function runBotMovement(bot, dt) {
   let tx = bot.x, tz = bot.z;
 
   if (bot.state === 'patrol') {
-    if (Math.random() < dt * 0.5) bot.yaw += (Math.random()-0.5) * 1.5;
-    tx = bot.x + Math.sin(bot.yaw) * bot.speed * dt * 0.4;
-    tz = bot.z + Math.cos(bot.yaw) * bot.speed * dt * 0.4;
+    if (Math.random() < dt * 1.2) bot.yaw += (Math.random()-0.5) * 2.2;
+    tx = bot.x + Math.sin(bot.yaw) * bot.speed * dt * 0.75;
+    tz = bot.z + Math.cos(bot.yaw) * bot.speed * dt * 0.75;
   } else if (bot.state === 'chase') {
     const tp = getTargetPos(bot);
     bot.yaw = Math.atan2(tp.x - bot.x, tp.z - bot.z);
@@ -2676,6 +2677,15 @@ function runBotMovement(bot, dt) {
   } else if (bot.state === 'attack') {
     const tp = getTargetPos(bot);
     bot.yaw = Math.atan2(tp.x - bot.x, tp.z - bot.z);
+    // Strafe perpendicular to aim — flip direction every 0.8–2s
+    bot.strafeTimer -= dt;
+    if (bot.strafeTimer <= 0) {
+      bot.strafeDir = Math.random() > 0.5 ? 1 : -1;
+      bot.strafeTimer = 0.8 + Math.random() * 1.2;
+    }
+    const sYaw = bot.yaw + (Math.PI / 2) * bot.strafeDir;
+    tx = bot.x + Math.sin(sYaw) * bot.speed * dt * 0.65;
+    tz = bot.z + Math.cos(sYaw) * bot.speed * dt * 0.65;
   } else if (bot.state === 'flee') {
     const tp = getTargetPos(bot);
     bot.yaw = Math.atan2(bot.x - tp.x, bot.z - tp.z);
