@@ -1077,9 +1077,17 @@ function updateGhost() {
       gy = Math.max(snapGrid(hit.point.y - 2) + 2, terrainAtWall + 2);
     } else if (buildType === 'floor') {
       ry = 0;
+      // X/Z always from crosshair so ghost follows where you aim
       gx = snapGrid(hit.point.x);
       gz = snapGrid(hit.point.z);
-      gy = snapGrid(hit.point.y) + 0.15;
+      // Y: when elevated snap to current standing level (connects to adjacent
+      // pieces flat); on the ground just snap to the crosshair hit Y
+      const terrainAtCam = getTerrainY(camera.position.x, camera.position.z);
+      if (footY > terrainAtCam + 0.5) {
+        gy = snapGrid(footY) + 0.15;
+      } else {
+        gy = snapGrid(hit.point.y) + 0.15;
+      }
     } else {
       gx = snapGrid(hit.point.x);
       gz = snapGrid(hit.point.z);
