@@ -1738,6 +1738,8 @@ const state = {
   endlessLevel: 0,
   kills: 0,
   botsAlive: 0,
+  livesMode: false,
+  lives: 3,
 };
 
 // Save / load
@@ -2041,9 +2043,11 @@ document.addEventListener('contextmenu', e => {
 });
 
 function startGame(endless) {
-  state.endless = endless;
-  state.phase   = 'playing';
-  state.kills   = 0;
+  state.endless   = endless;
+  state.phase     = 'playing';
+  state.kills     = 0;
+  state.livesMode = false;
+  state.lives     = 3;
 
   if (endless) {
     state.endlessLevel++;
@@ -2731,8 +2735,36 @@ function damagePlayer(dmg) {
   if (player.hp <= 0) killPlayer();
 }
 
+function respawnPlayer() {
+  const angle = Math.random() * Math.PI * 2;
+  const dist  = Math.random() * storm.radius * 0.8;
+  const rx = storm.cx + Math.cos(angle) * dist;
+  const rz = storm.cz + Math.sin(angle) * dist;
+  camera.position.set(rx, getTerrainY(rx, rz) + PLAYER_HEIGHT, rz);
+  player.hp = 100;
+  player.hitTime = 0;
+  player.inStorm = false;
+  document.getElementById('overlay').style.display = 'none';
+  canvas.requestPointerLock();
+}
+
 function killPlayer() {
   player.hp = 0;
+  if (state.livesMode && state.lives > 0) {
+    state.lives--;
+    state.phase = 'playing';
+    document.exitPointerLock();
+    const livesLeft = state.lives;
+    const ov = document.getElementById('overlay');
+    ov.style.display = 'flex';
+    ov.innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;gap:1em;">
+      <h2 style="color:#ff4444;margin:0">YOU DIED</h2>
+      <p style="color:#fff;margin:0">${livesLeft} ${livesLeft === 1 ? 'life' : 'lives'} remaining</p>
+      <button class="btn" id="btnRespawn">RESPAWN</button>
+    </div>`;
+    document.getElementById('btnRespawn').addEventListener('click', respawnPlayer);
+    return;
+  }
   state.phase = 'dead';
   document.exitPointerLock();
   showOverlay('YOU DIED', `Level ${state.level} — Try again?`, 'RETRY', 'MAIN MENU');
@@ -2843,6 +2875,7 @@ function getMainMenuHTML() {
     ${maxLevel > 1 ? grid : ''}
     <button class="btn" id="btnPlay">&#9654; LEVEL ${Math.min(maxLevel, 100)}</button>
     ${unlocked ? '<button class="btn" id="btnEndless" style="background:#6622cc;color:#fff">&#8734; ENDLESS MODE</button>' : ''}
+    <button class="btn" id="btnLives" style="background:#cc2222;color:#fff">&#10084; 3 LIVES MODE</button>
     <p style="font-size:0.8em;color:#777;margin-top:0.8em">Progress saved automatically</p>
   `;
 }
@@ -2853,9 +2886,16 @@ window.launchLevel = function(lvl) {
   startGame(false);
 };
 
+function startLivesGame() {
+  startGame(false);
+  state.livesMode = true;
+  state.lives = 3;
+}
+
 function bindMainMenuButtons() {
   document.getElementById('btnPlay')?.addEventListener('click', () => startGame(false));
   document.getElementById('btnEndless')?.addEventListener('click', () => startGame(true));
+  document.getElementById('btnLives')?.addEventListener('click', startLivesGame);
 }
 
 function triggerLightning() {
@@ -2961,6 +3001,18 @@ function updateHUD() {
   hctx.font = 'bold 13px Segoe UI';
   hctx.textAlign = 'center';
   hctx.fillText(`HP: ${Math.ceil(player.hp)}`, 126, H - 36);
+
+  // ── Lives counter (above HP bar, lives mode only) ──
+  if (state.livesMode) {
+    hctx.save();
+    hctx.font = 'bold 16px Segoe UI';
+    hctx.textAlign = 'left';
+    let hearts = '';
+    for (let i = 0; i < 3; i++) hearts += i < state.lives ? '❤' : '🖤';
+    hctx.fillStyle = '#ff4444';
+    hctx.fillText(hearts, 24, H - 68);
+    hctx.restore();
+  }
 
   // ── Ammo counter (bottom right) ──
   const inv = player.inventory[player.weapon];
