@@ -1106,6 +1106,22 @@ function updateGhost() {
       gx = isXFacingFb ? snapFace(camera.position.x + fwdX) : snapGrid(camera.position.x + fwdX);
       gz = isXFacingFb ? snapGrid(camera.position.z + fwdZ) : snapFace(camera.position.z + fwdZ);
       gy = getTerrainY(gx, gz) + 2;
+    } else if (buildType === 'floor') {
+      ry = 0;
+      const terrainAtCamFb = getTerrainY(camera.position.x, camera.position.z);
+      if (footY > terrainAtCamFb + 0.5) {
+        // Elevated + no surface hit: project crosshair direction horizontally
+        // onto the foot-level grid plane so floor snaps where you're aiming
+        const rd = ray.ray.direction;
+        const hLen = Math.sqrt(rd.x * rd.x + rd.z * rd.z) || 1;
+        gx = snapGrid(camera.position.x + (rd.x / hLen) * GRID);
+        gz = snapGrid(camera.position.z + (rd.z / hLen) * GRID);
+        gy = snapGrid(footY) + 0.15;
+      } else {
+        gx = snapGrid(camera.position.x + fwdX);
+        gz = snapGrid(camera.position.z + fwdZ);
+        gy = snapGrid(getTerrainY(gx, gz)) + 0.15;
+      }
     } else {
       gx = snapGrid(camera.position.x + fwdX);
       gz = snapGrid(camera.position.z + fwdZ);
@@ -1838,7 +1854,8 @@ const keys = {};
 document.addEventListener('keydown', e => { keys[e.code] = true; });
 document.addEventListener('keyup',   e => { keys[e.code] = false; });
 let mouseLeftDown = false;
-document.addEventListener('mousedown', e => { if (e.button === 0) mouseLeftDown = true; });
+let buildHoldTimer = 0;
+document.addEventListener('mousedown', e => { if (e.button === 0) { mouseLeftDown = true; buildHoldTimer = 0.15; } });
 document.addEventListener('mouseup',   e => { if (e.button === 0) mouseLeftDown = false; });
 // isAction declared here so it's after the keys object it depends on
 function isAction(action) { return !!keys[settings.binds[action]]; }
@@ -2258,6 +2275,14 @@ function loop(t) {
     updateDust(dt);
     updateLightning(dt);
     if (buildMode) updateGhost();
+    // Hold to build: continuously place while mouse held (0.15s delay then ~10/sec)
+    if (mouseLeftDown && buildMode && document.pointerLockElement === canvas) {
+      buildHoldTimer -= dt;
+      if (buildHoldTimer <= 0) {
+        placePiece();
+        buildHoldTimer = 0.08;
+      }
+    }
     // Auto-fire: hold mouse to shoot continuously (fire rate gated by fireCooldown inside shoot())
     if (mouseLeftDown && !buildMode && document.pointerLockElement === canvas) {
       if (editMode && editPiece) {
