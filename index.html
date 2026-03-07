@@ -2972,7 +2972,9 @@ function killPlayer() {
 }
 
 function checkWinCondition() {
-  if (state.botsAlive <= 0 && state.phase === 'playing') {
+  // Count directly — state.botsAlive is updated at end of updateBots() so it
+  // is stale when called from killBot() mid-loop.
+  if (bots.every(b => !b.alive) && state.phase === 'playing') {
     state.phase = 'win';
     document.exitPointerLock();
     if (!state.endless) {
