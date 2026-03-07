@@ -1451,7 +1451,8 @@ function addTree(x, z, seed) {
     scene.add(m);
   });
 
-  envObjects.push({ x, z, w: 0.5, d: 0.5 });
+  // maxY caps collision at trunk top so building above trees doesn't hit invisible blocks
+  envObjects.push({ x, z, w: 0.5, d: 0.5, maxY: y + h });
 }
 
 function addRock(x, z, seed) {
@@ -1465,7 +1466,7 @@ function addRock(x, z, seed) {
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   scene.add(mesh);
-  envObjects.push({ x, z, w: s + 0.3, d: s + 0.3 });
+  envObjects.push({ x, z, w: s + 0.3, d: s + 0.3, maxY: y + s * 1.6 });
 }
 
 // Procedurally place environment
