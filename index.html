@@ -1666,10 +1666,7 @@ function giveWeapon(key) {
 }
 
 function updateGunVisual() {
-  const color = new THREE.Color(WEAPON_COLORS[player.weapon]);
-  gunBody.material.color.set(color);
-  // Scale barrel by weapon type
-  gunBarrel.scale.z = player.weapon === 'sniper' ? 1.6 : player.weapon === 'shotgun' ? 0.8 : 1;
+  buildGunModel(player.weapon);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -1912,28 +1909,135 @@ let lightningTimer = 0;
 //  GUN MESH (attached to camera)
 // ════════════════════════════════════════════════════════════════
 const gunGroup = new THREE.Group();
-const gunBarrel = new THREE.Mesh(
-  new THREE.BoxGeometry(0.08, 0.08, 0.6),
-  new THREE.MeshLambertMaterial({ color: 0x444444 })
-);
-gunBarrel.position.set(0, 0, -0.3);
-const gunBody = new THREE.Mesh(
-  new THREE.BoxGeometry(0.15, 0.2, 0.35),
-  new THREE.MeshLambertMaterial({ color: 0x555555 })
-);
-gunBody.position.set(0, -0.05, 0.05);
-gunGroup.add(gunBarrel, gunBody);
 gunGroup.position.set(0.28, -0.22, -0.45);
 camera.add(gunGroup);
 scene.add(camera);   // must add camera to scene for children to render
 
-// Muzzle flash
-const flashMat = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffff00, emissiveIntensity: 3.0, transparent: true, opacity: 0 });
+// Muzzle flash (shared across models)
+const flashMat  = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffff00, emissiveIntensity: 3.0, transparent: true, opacity: 0 });
 const flashMesh = new THREE.Mesh(new THREE.SphereGeometry(0.18, 6, 6), flashMat);
-flashMesh.position.set(0, 0, -0.65);
-gunGroup.add(flashMesh);
 let flashTimer = 0;
 let isZoomed = false;
+
+function buildGunModel(type) {
+  while (gunGroup.children.length) gunGroup.remove(gunGroup.children[0]);
+
+  const mMetal   = new THREE.MeshStandardMaterial({ color: 0x2c2c2c, roughness: 0.35, metalness: 0.85 });
+  const mDark    = new THREE.MeshStandardMaterial({ color: 0x181818, roughness: 0.40, metalness: 0.80 });
+  const mPolymer = new THREE.MeshStandardMaterial({ color: 0x252525, roughness: 0.80, metalness: 0.10 });
+  const mGrip    = new THREE.MeshStandardMaterial({ color: 0x141414, roughness: 0.95, metalness: 0.05 });
+  const mScope   = new THREE.MeshStandardMaterial({ color: 0x101010, roughness: 0.25, metalness: 0.95 });
+  const mShiny   = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.15, metalness: 1.00 });
+  const mWood    = new THREE.MeshStandardMaterial({ color: 0x7a3d10, roughness: 0.90, metalness: 0.00 });
+
+  function bx(w, h, d, mat, x, y, z) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(x, y, z); m.castShadow = true; gunGroup.add(m); return m;
+  }
+  function cy(rt, rb, h, seg, mat, x, y, z) {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), mat);
+    m.rotation.x = Math.PI / 2; m.position.set(x, y, z); m.castShadow = true; gunGroup.add(m); return m;
+  }
+
+  let flashZ = -0.65;
+
+  if (type === 'pistol') {
+    bx(0.085, 0.110, 0.265, mMetal,    0,  0.025, -0.085);  // slide
+    bx(0.078, 0.078, 0.200, mPolymer,  0, -0.020,  0.010);  // frame
+    cy(0.025, 0.025, 0.078, 7, mDark,  0,  0.030, -0.248);  // barrel protrusion
+    bx(0.072, 0.180, 0.090, mGrip,     0, -0.144,  0.048);  // grip
+    bx(0.064, 0.015, 0.108, mPolymer,  0, -0.075, -0.020);  // trigger guard
+    bx(0.082, 0.015, 0.018, mShiny,    0,  0.085, -0.182);  // rear sight
+    bx(0.012, 0.022, 0.010, mShiny,    0,  0.078, -0.218);  // front sight
+    bx(0.070, 0.016, 0.082, mDark,     0, -0.236,  0.048);  // mag base plate
+    bx(0.065, 0.012, 0.155, mMetal,    0, -0.062, -0.030);  // accessory rail
+    for (let i = 0; i < 3; i++)                              // slide serrations
+      bx(0.090, 0.008, 0.012, mDark,   0,  0.082, -0.145 + i * 0.022);
+    flashZ = -0.290;
+
+  } else if (type === 'rifle') {
+    bx(0.072, 0.085, 0.455, mMetal,    0,  0.018, -0.130);  // upper receiver
+    bx(0.070, 0.072, 0.275, mPolymer,  0, -0.050, -0.005);  // lower receiver
+    cy(0.022, 0.022, 0.510, 8, mDark,  0,  0.022, -0.425);  // barrel
+    cy(0.030, 0.022, 0.058, 6, mMetal, 0,  0.022, -0.679);  // flash hider
+    bx(0.078, 0.055, 0.295, mPolymer,  0, -0.006, -0.268);  // handguard
+    bx(0.058, 0.010, 0.295, mDark,     0,  0.025, -0.268);  // handguard top rail
+    bx(0.058, 0.010, 0.455, mDark,     0,  0.065, -0.130);  // receiver top rail
+    bx(0.050, 0.040, 0.248, mPolymer,  0,  0.088, -0.015);  // carry handle
+    bx(0.056, 0.012, 0.018, mShiny,    0,  0.118,  0.115);  // rear sight aperture
+    bx(0.062, 0.170, 0.082, mGrip,     0, -0.162, -0.005);  // pistol grip
+    bx(0.062, 0.088, 0.285, mPolymer,  0,  0.005,  0.292);  // stock
+    bx(0.060, 0.094, 0.018, mDark,     0,  0.005,  0.436);  // butt plate
+    bx(0.018, 0.028, 0.040, mMetal, 0.044, 0.058,  0.055);  // charging handle
+    bx(0.056, 0.210, 0.072, mPolymer,  0, -0.192, -0.068);  // magazine body
+    bx(0.058, 0.210, 0.014, mDark,     0, -0.192, -0.107);  // mag front curve
+    flashZ = -0.710;
+
+  } else if (type === 'shotgun') {
+    bx(0.108, 0.128, 0.358, mMetal,    0,  0.008, -0.075);  // receiver
+    bx(0.098, 0.058, 0.425, mDark,     0,  0.056, -0.362);  // barrel block
+    bx(0.010, 0.068, 0.425, mMetal,    0,  0.056, -0.362);  // barrel rib
+    bx(0.102, 0.062, 0.030, mDark,     0,  0.056, -0.590);  // muzzle crown
+    cy(0.022, 0.022, 0.390, 7, mDark,  0,  0.022, -0.330);  // tube magazine
+    bx(0.094, 0.086, 0.198, mGrip,     0, -0.012, -0.295);  // pump forend
+    for (let i = 0; i < 5; i++)                              // pump ridges
+      bx(0.100, 0.007, 0.010, mDark,   0, -0.012, -0.232 + i * 0.044);
+    bx(0.080, 0.162, 0.088, mGrip,     0, -0.136,  0.055);  // pistol grip
+    bx(0.088, 0.108, 0.308, mWood,     0,  0.004,  0.248);  // stock (wood)
+    bx(0.086, 0.112, 0.020, mDark,     0,  0.004,  0.408);  // butt pad
+    bx(0.110, 0.014, 0.116, mMetal,    0, -0.052, -0.022);  // trigger guard
+    bx(0.110, 0.052, 0.092, mDark,     0,  0.048, -0.010);  // ejection port
+    flashZ = -0.608;
+
+  } else if (type === 'sniper') {
+    bx(0.070, 0.090, 0.415, mMetal,    0,  0.010, -0.110);  // receiver
+    cy(0.020, 0.022, 0.748, 8, mDark,  0,  0.020, -0.554);  // barrel
+    cy(0.032, 0.026, 0.065, 8, mMetal, 0,  0.020, -0.952);  // muzzle brake
+    bx(0.038, 0.018, 0.010, mDark,     0,  0.020, -0.960);  // brake vent
+    cy(0.038, 0.038, 0.355,12, mScope, 0,  0.108, -0.068);  // scope body
+    cy(0.046, 0.038, 0.028,12, mDark,  0,  0.108, -0.252);  // objective lens
+    cy(0.042, 0.038, 0.024,12, mDark,  0,  0.108,  0.112);  // eyepiece
+    cy(0.015, 0.015, 0.036, 8, mShiny, 0,  0.155, -0.068);  // elevation turret
+    { const t = new THREE.Mesh(new THREE.CylinderGeometry(0.015,0.015,0.036,8), mShiny);
+      t.rotation.z = Math.PI/2; t.position.set(0.054, 0.108, -0.068); gunGroup.add(t); } // windage turret
+    bx(0.088, 0.026, 0.052, mMetal,    0,  0.082,  0.006);  // scope mount front
+    bx(0.088, 0.026, 0.052, mMetal,    0,  0.082, -0.145);  // scope mount rear
+    bx(0.055, 0.010, 0.415, mDark,     0,  0.058, -0.110);  // top rail
+    bx(0.062, 0.165, 0.080, mGrip,     0, -0.162,  0.000);  // pistol grip
+    bx(0.062, 0.090, 0.352, mPolymer,  0,  0.008,  0.306);  // stock
+    bx(0.060, 0.038, 0.158, mPolymer,  0,  0.065,  0.228);  // cheek rest
+    bx(0.060, 0.095, 0.018, mDark,     0,  0.008,  0.488);  // butt plate
+    bx(0.052, 0.138, 0.068, mMetal,    0, -0.172, -0.082);  // magazine
+    bx(0.074, 0.016, 0.024, mMetal, 0.046, 0.010,  0.065);  // bolt handle
+    bx(0.007, 0.108, 0.009, mMetal, -0.036,-0.052,-0.290);  // bipod left
+    bx(0.007, 0.108, 0.009, mMetal,  0.036,-0.052,-0.290);  // bipod right
+    flashZ = -0.988;
+
+  } else { // smg
+    bx(0.072, 0.090, 0.288, mMetal,    0,  0.010, -0.062);  // receiver
+    cy(0.023, 0.023, 0.252, 8, mDark,  0,  0.022, -0.248);  // barrel
+    cy(0.030, 0.023, 0.040, 6, mMetal, 0,  0.022, -0.374);  // flash hider
+    bx(0.009, 0.072, 0.232, mMetal, 0.048, 0.018,  0.220);  // folding stock spine
+    bx(0.009, 0.025, 0.062, mMetal, 0.048, 0.052,  0.112);  // stock top bar
+    bx(0.009, 0.025, 0.062, mMetal, 0.048, 0.052,  0.322);  // stock bottom bar
+    bx(0.062, 0.155, 0.080, mGrip,     0, -0.150,  0.008);  // pistol grip
+    bx(0.052, 0.258, 0.070, mPolymer,  0, -0.226, -0.055);  // magazine body
+    bx(0.055, 0.258, 0.013, mDark,     0, -0.226, -0.092);  // mag front curve
+    bx(0.050, 0.140, 0.048, mGrip,     0, -0.108, -0.238);  // vertical foregrip
+    bx(0.068, 0.013, 0.108, mPolymer,  0, -0.053,  0.000);  // trigger guard
+    bx(0.018, 0.022, 0.038, mMetal, 0.044, 0.056,  0.055);  // charging handle
+    bx(0.055, 0.012, 0.288, mDark,     0,  0.062, -0.062);  // top rail
+    bx(0.042, 0.046, 0.062, mPolymer,  0,  0.088, -0.028);  // red dot body
+    bx(0.010, 0.005, 0.010,           // red dot emissive lens
+      new THREE.MeshStandardMaterial({color:0xff2200,emissive:0xff3300,emissiveIntensity:1.5}),
+      0, 0.116, -0.028);
+    flashZ = -0.396;
+  }
+
+  flashMesh.position.set(0, 0, flashZ);
+  gunGroup.add(flashMesh);
+}
+buildGunModel('pistol'); // initial model at game load
 
 // ════════════════════════════════════════════════════════════════
 //  INPUT
