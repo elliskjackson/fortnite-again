@@ -620,7 +620,6 @@ const terrainMat  = new THREE.MeshStandardMaterial({ color: 0x7aaf6a, map: grass
 const terrainMesh = new THREE.Mesh(terrainGeo, terrainMat);
 terrainMesh.rotation.x = -Math.PI / 2;
 terrainMesh.receiveShadow = true;
-environmentMeshes.push(terrainMesh);
 
 // Displace vertices for rolling hills (keep center flat for gameplay)
 const pos = terrainGeo.attributes.position;
@@ -646,6 +645,7 @@ terrainMesh.updateMatrixWorld(true);
 const envObjects = [];       // used for collision
 const buildingSurfaces = []; // roof/floor meshes players can stand on top of
 const environmentMeshes = []; // bullet-hittable world geometry (terrain + walls + rocks + trunks)
+environmentMeshes.push(terrainMesh); // terrainMesh is already created above
 const chests = [];
 const worldWeapons = [];  // dropped loot: { mesh, weaponType, x, y, z, bobT, lifetime }
 
