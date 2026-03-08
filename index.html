@@ -1342,7 +1342,20 @@ function addBuilding(x, z, seed) {
   const d = 6 + seededRand(seed+2) * 10;
   // Register footprint so trees/rocks won't spawn inside this building (+3 unit buffer)
   buildingFootprints.push({ x, z, hw: w / 2 + 3, hd: d / 2 + 3 });
-  const groundY = placeOnTerrain(x, z);
+  // Sample 9 points across the footprint and use the minimum height so the
+  // building sinks into any hill beneath it rather than floating above it.
+  const hw = w / 2, hd = d / 2;
+  const groundY = Math.min(
+    getTerrainHeightMath(x,      z),
+    getTerrainHeightMath(x - hw, z - hd),
+    getTerrainHeightMath(x + hw, z - hd),
+    getTerrainHeightMath(x - hw, z + hd),
+    getTerrainHeightMath(x + hw, z + hd),
+    getTerrainHeightMath(x - hw, z),
+    getTerrainHeightMath(x + hw, z),
+    getTerrainHeightMath(x,      z - hd),
+    getTerrainHeightMath(x,      z + hd)
+  );
 
   // Material — exterior hue
   const hue = 0.08 + seededRand(seed+3) * 0.05;
