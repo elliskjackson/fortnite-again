@@ -620,6 +620,7 @@ const terrainMat  = new THREE.MeshStandardMaterial({ color: 0x7aaf6a, map: grass
 const terrainMesh = new THREE.Mesh(terrainGeo, terrainMat);
 terrainMesh.rotation.x = -Math.PI / 2;
 terrainMesh.receiveShadow = true;
+environmentMeshes.push(terrainMesh);
 
 // Displace vertices for rolling hills (keep center flat for gameplay)
 const pos = terrainGeo.attributes.position;
@@ -644,6 +645,7 @@ terrainMesh.updateMatrixWorld(true);
 // ════════════════════════════════════════════════════════════════
 const envObjects = [];       // used for collision
 const buildingSurfaces = []; // roof/floor meshes players can stand on top of
+const environmentMeshes = []; // bullet-hittable world geometry (terrain + walls + rocks + trunks)
 const chests = [];
 const worldWeapons = [];  // dropped loot: { mesh, weaponType, x, y, z, bobT, lifetime }
 
@@ -1323,6 +1325,7 @@ function addBuilding(x, z, seed) {
     m.castShadow = true;
     m.receiveShadow = true;
     scene.add(m);
+    if (!isInterior) environmentMeshes.push(m); // exterior walls are bullet targets
     return m;
   }
 
@@ -1492,6 +1495,7 @@ function addTree(x, z, seed) {
   trunk.rotation.y = seededRand(seed + 6) * Math.PI * 2;
   trunk.castShadow = true;
   scene.add(trunk);
+  environmentMeshes.push(trunk);
 
   // Root ridges — 4 tapered fins radiating from the base
   const rootMat = new THREE.MeshStandardMaterial({ color: 0x5a3020, map: barkTex, roughness: 0.97, metalness: 0.0 });
@@ -1553,6 +1557,7 @@ function addRock(x, z, seed) {
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   scene.add(mesh);
+  environmentMeshes.push(mesh);
   envObjects.push({ x, z, w: s + 0.3, d: s + 0.3, maxY: y + s * 1.6 });
 }
 
@@ -1829,34 +1834,38 @@ function shoot() {
   const pellets = WEAPONS[player.weapon].pellets || 1;
   const spread  = WEAPONS[player.weapon].spread;
 
+  // Build scratch arrays once per shot (not per pellet)
+  _pieceMeshScratch.length = 0;
+  for (const pp of placedPieces) _pieceMeshScratch.push(pp.mesh);
+  _aliveBotMeshScratch.length = 0;
+  for (const b of bots) if (b.alive) _aliveBotMeshScratch.push(b.mesh);
+
+  const weaponRange  = WEAPONS[player.weapon].range;
+  const weaponDamage = WEAPONS[player.weapon].damage;
+
   for (let p = 0; p < pellets; p++) {
-    const dir = new THREE.Vector3(
+    // Reuse pre-allocated dir and raycaster — no heap allocation per pellet
+    _shootDir.set(
       (Math.random() - 0.5) * spread * 2,
       (Math.random() - 0.5) * spread * 2,
       -1
     ).normalize();
-    dir.applyQuaternion(camera.quaternion);
+    _shootDir.applyQuaternion(camera.quaternion);
+    _shootRay.set(camera.position, _shootDir);
+    _shootRay.near = 0.1;
+    _shootRay.far  = weaponRange;
 
-    const ray = new THREE.Raycaster(camera.position.clone(), dir, 0.1, WEAPONS[player.weapon].range);
     // Check placed pieces first
-    if (placedPieces.length > 0) {
-      const pieceMeshes = flatMeshes(placedPieces.map(p => p.mesh));
-      const pieceHits = ray.intersectObjects(pieceMeshes, false);
+    if (_pieceMeshScratch.length > 0) {
+      const pieceHits = _shootRay.intersectObjects(_pieceMeshScratch, false);
       if (pieceHits.length > 0) {
-        // Find the placedPiece entry for the hit mesh
         const hitMesh = pieceHits[0].object;
-        const hitPiece = placedPieces.find(p => {
-          let found = false;
-          p.mesh.traverse(c => { if (c === hitMesh || p.mesh === hitMesh) found = true; });
-          return found;
-        });
+        const hitPiece = placedPieces.find(pp => pp.mesh === hitMesh);
         if (hitPiece) {
-          // Only block if piece is closer than any bot
-          const botMeshes = bots.filter(b => b.alive).map(b => b.mesh);
-          const botHits = ray.intersectObjects(botMeshes, true);
+          const botHits = _shootRay.intersectObjects(_aliveBotMeshScratch, true);
           const botDist = botHits.length > 0 ? botHits[0].distance : Infinity;
           if (pieceHits[0].distance <= botDist) {
-            damagePiece(hitPiece, WEAPONS[player.weapon].damage);
+            damagePiece(hitPiece, weaponDamage);
             spawnImpact(pieceHits[0].point);
             return;
           }
@@ -1866,15 +1875,15 @@ function shoot() {
     // Check bots
     for (const bot of bots) {
       if (!bot.alive) continue;
-      const hits = ray.intersectObject(bot.mesh, true);
+      const hits = _shootRay.intersectObject(bot.mesh, true);
       if (hits.length) {
-        damageBot(bot, WEAPONS[player.weapon].damage);
+        damageBot(bot, weaponDamage);
         spawnImpact(hits[0].point);
         break;
       }
     }
-    // Check environment (visual impact only)
-    const envHits = ray.intersectObjects(scene.children, false);
+    // Check environment (curated list — NOT scene.children which has thousands of objects)
+    const envHits = _shootRay.intersectObjects(environmentMeshes, false);
     if (envHits.length) spawnImpact(envHits[0].point);
   }
 }
@@ -2659,18 +2668,20 @@ function updatePlayer(dt) {
   const speed = player.crouching ? PLAYER_SPEED * 0.5 : PLAYER_SPEED;
   const height = player.crouching ? PLAYER_HEIGHT * 0.6 : PLAYER_HEIGHT;
 
-  // Movement direction
-  const forward = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
-  const right   = new THREE.Vector3( Math.cos(player.yaw), 0, -Math.sin(player.yaw));
-  const move    = new THREE.Vector3();
-  if (isAction('forward')) move.addScaledVector(forward,  1);
-  if (isAction('back'))    move.addScaledVector(forward, -1);
-  if (isAction('left'))    move.addScaledVector(right,   -1);
-  if (isAction('right'))   move.addScaledVector(right,    1);
-  if (move.lengthSq() > 0) move.normalize().multiplyScalar(speed * dt);
+  // Movement direction — reuse pre-allocated vectors, no heap allocation per frame
+  _moveFwd.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
+  _moveRight.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
+  _moveVec.set(0, 0, 0);
+  if (isAction('forward')) _moveVec.addScaledVector(_moveFwd,   1);
+  if (isAction('back'))    _moveVec.addScaledVector(_moveFwd,  -1);
+  if (isAction('left'))    _moveVec.addScaledVector(_moveRight,-1);
+  if (isAction('right'))   _moveVec.addScaledVector(_moveRight, 1);
+  if (_moveVec.lengthSq() > 0) _moveVec.normalize().multiplyScalar(speed * dt);
+  const move = _moveVec; // alias for readability below
 
   // Apply horizontal movement with wall collision
-  const next = camera.position.clone().add(move);
+  _nextPos.copy(camera.position).add(move);
+  const next = _nextPos;
   if (!checkWallCollision(next.x, camera.position.z)) camera.position.x = next.x;
   if (!checkWallCollision(camera.position.x, next.z)) camera.position.z = next.z;
 
@@ -2733,6 +2744,18 @@ const _downOrigin = new THREE.Vector3();
 const _downDir    = new THREE.Vector3(0, -1, 0);
 // Pre-allocated for edit-paint raycast (can fire every frame while mouse held)
 const _editPaintRay = new THREE.Raycaster();
+// Pre-allocated for shoot() — avoids new Raycaster + Vector3 per pellet
+const _shootRay = new THREE.Raycaster();
+const _shootDir = new THREE.Vector3();
+const _pieceMeshScratch    = []; // reused each shot for placed-piece mesh list
+const _aliveBotMeshScratch = []; // reused each shot for alive-bot mesh list
+// Pre-allocated for updatePlayer movement — avoids 4 new Vector3 per frame
+const _moveFwd   = new THREE.Vector3();
+const _moveRight = new THREE.Vector3();
+const _moveVec   = new THREE.Vector3();
+const _nextPos   = new THREE.Vector3();
+// Pre-allocated for runBotShooting — avoids new Vector3 per bot shot
+const _botFromPos = new THREE.Vector3();
 
 function getTerrainY(x, z) {
   _terrainRayOrigin.set(x, 50, z);
@@ -2957,14 +2980,15 @@ function runBotShooting(bot, dt, distToPlayer) {
   if (bot.fireCooldown > 0) return;
   bot.fireCooldown = WEAPONS[bot.weapon].fireRate * (1 / bot.accuracy) * 0.5;
   if (Math.random() > bot.accuracy) return;
-  const fromPos = new THREE.Vector3(bot.x, bot.y + 1.4, bot.z); // gun height
+  _botFromPos.set(bot.x, bot.y + 1.4, bot.z); // gun height — reuse pre-allocated
   if (bot.target === 'player') {
     damagePlayer(WEAPONS[bot.weapon].damage * 0.6);
-    spawnTracer(fromPos, camera.position.clone(), 0xff4422); // red-orange → player
+    spawnTracer(_botFromPos, camera.position, 0xff4422); // red-orange → player
   } else if (bot.target && bot.target.alive) {
     damageBot(bot.target, WEAPONS[bot.weapon].damage * 2.5, false);
-    const toPos = new THREE.Vector3(bot.target.x, bot.target.y + 1.4, bot.target.z);
-    spawnTracer(fromPos, toPos, 0xffaa00); // yellow-orange → other bot
+    // Reuse _nextPos as scratch for target position (not used concurrently)
+    _nextPos.set(bot.target.x, bot.target.y + 1.4, bot.target.z);
+    spawnTracer(_botFromPos, _nextPos, 0xffaa00); // yellow-orange → other bot
   }
 }
 
