@@ -615,23 +615,31 @@ leavesTex.repeat.set(2, 2);
 // ════════════════════════════════════════════════════════════════
 //  TERRAIN
 // ════════════════════════════════════════════════════════════════
-const terrainGeo  = new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 80, 80);
+const terrainGeo  = new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 100, 100);
 const terrainMat  = new THREE.MeshStandardMaterial({ color: 0x7aaf6a, map: grassTex, roughness: 0.92, metalness: 0.0 });
 const terrainMesh = new THREE.Mesh(terrainGeo, terrainMat);
 terrainMesh.rotation.x = -Math.PI / 2;
 terrainMesh.receiveShadow = true;
 
-// Displace vertices for rolling hills (keep center flat for gameplay)
+// Displace vertices for hills and mountains (flat centre for spawn, big peaks at edges)
 const pos = terrainGeo.attributes.position;
 for (let i = 0; i < pos.count; i++) {
   const x = pos.getX(i), z = pos.getY(i);  // note: pre-rotation axes
   const dist = Math.sqrt(x*x + z*z);
-  const flatZone = 60;
+  const flatZone = 55;
   if (dist > flatZone) {
-    const t = (dist - flatZone) / (MAP_SIZE * 0.4);
-    const h = Math.sin(x * 0.04) * 3 + Math.cos(z * 0.05) * 2.5
-            + Math.sin(x * 0.01 + z * 0.012) * 6;
-    pos.setZ(i, h * Math.min(t, 1));
+    // Smoothly ramp up from flat zone edge to full amplitude
+    const t = Math.max(0, Math.min(1, (dist - flatZone) / (MAP_SIZE * 0.30)));
+    // Multi-scale noise: broad valleys + mid hills + fine surface detail
+    const h = Math.sin(x * 0.022) * 7
+            + Math.cos(z * 0.018) * 6
+            + Math.sin(x * 0.009 + z * 0.007) * 12
+            + Math.sin(x * 0.042 + z * 0.038) * 5
+            + Math.cos(x * 0.085 + z * 0.074) * 2;
+    // Extra boost at outer ring → dramatic mountain range
+    const outerT = Math.max(0, Math.min(1, (dist - MAP_SIZE * 0.36) / (MAP_SIZE * 0.12)));
+    const outerBoost = outerT * outerT * 18;
+    pos.setZ(i, (h + outerBoost) * t);
   }
 }
 terrainGeo.computeVertexNormals();
@@ -645,6 +653,7 @@ terrainMesh.updateMatrixWorld(true);
 const envObjects = [];       // used for collision
 const buildingSurfaces = []; // roof/floor meshes players can stand on top of
 const environmentMeshes = []; // bullet-hittable world geometry (terrain + walls + rocks + trunks)
+const buildingFootprints = []; // {x,z,hw,hd} used to prevent trees spawning inside buildings
 environmentMeshes.push(terrainMesh); // terrainMesh is already created above
 const chests = [];
 const worldWeapons = [];  // dropped loot: { mesh, weaponType, x, y, z, bobT, lifetime }
@@ -1280,7 +1289,7 @@ function seededRand(seed) {
 
 function placeOnTerrain(x, z) {
   // Get Y on terrain via raycasting down from above
-  const ray = new THREE.Raycaster(new THREE.Vector3(x, 50, z), new THREE.Vector3(0,-1,0));
+  const ray = new THREE.Raycaster(new THREE.Vector3(x, 90, z), new THREE.Vector3(0,-1,0));
   const hits = ray.intersectObject(terrainMesh);
   return hits.length ? hits[0].point.y : 0;
 }
@@ -1293,6 +1302,8 @@ function addBuilding(x, z, seed) {
   const w = 6 + seededRand(seed)   * 10;
   const h = 4 + seededRand(seed+1) * 12;
   const d = 6 + seededRand(seed+2) * 10;
+  // Register footprint so trees/rocks won't spawn inside this building (+3 unit buffer)
+  buildingFootprints.push({ x, z, hw: w / 2 + 3, hd: d / 2 + 3 });
   const groundY = placeOnTerrain(x, z);
 
   // Material — exterior hue
@@ -1581,11 +1592,17 @@ function addRock(x, z, seed) {
     }
   }
 
-  // Trees
+  // Trees — skip positions that land inside a building footprint
   for (let i = 0; i < 120; i++) {
-    const angle = rng(seed++) * Math.PI * 2;
-    const dist  = 20 + rng(seed++) * 230;
-    addTree(Math.cos(angle)*dist, Math.sin(angle)*dist, seed++);
+    const angle    = rng(seed++) * Math.PI * 2;
+    const dist     = 20 + rng(seed++) * 230;
+    const treeSeed = seed++;
+    const tx = Math.cos(angle) * dist;
+    const tz = Math.sin(angle) * dist;
+    const inBuilding = buildingFootprints.some(f =>
+      Math.abs(tx - f.x) < f.hw && Math.abs(tz - f.z) < f.hd
+    );
+    if (!inBuilding) addTree(tx, tz, treeSeed);
   }
 
   // Rocks
@@ -2737,7 +2754,7 @@ function updatePlayer(dt) {
 const _terrainRayOrigin = new THREE.Vector3();
 const _terrainRayDir    = new THREE.Vector3(0, -1, 0);
 const _terrainRaycaster = new THREE.Raycaster();
-_terrainRaycaster.far   = 120;
+_terrainRaycaster.far   = 160;
 // Pre-allocated for updatePlayer downward ground-collision ray (called every frame)
 const _downRay    = new THREE.Raycaster();
 const _downOrigin = new THREE.Vector3();
@@ -2758,7 +2775,7 @@ const _nextPos   = new THREE.Vector3();
 const _botFromPos = new THREE.Vector3();
 
 function getTerrainY(x, z) {
-  _terrainRayOrigin.set(x, 50, z);
+  _terrainRayOrigin.set(x, 90, z);
   _terrainRaycaster.set(_terrainRayOrigin, _terrainRayDir);
   const hits = _terrainRaycaster.intersectObject(terrainMesh);
   return hits.length ? hits[0].point.y : 0;
