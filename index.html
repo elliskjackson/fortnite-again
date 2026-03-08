@@ -1287,11 +1287,24 @@ function seededRand(seed) {
   return x - Math.floor(x);
 }
 
+// Fast O(1) terrain height — matches vertex displacement formula exactly
+function getTerrainHeightMath(worldX, worldZ) {
+  const dist = Math.sqrt(worldX * worldX + worldZ * worldZ);
+  const flatZone = 55;
+  if (dist <= flatZone) return 0;
+  const t = Math.max(0, Math.min(1, (dist - flatZone) / (MAP_SIZE * 0.30)));
+  const h = Math.sin(worldX * 0.022) * 7
+          + Math.cos(worldZ * 0.018) * 6
+          + Math.sin(worldX * 0.009 + worldZ * 0.007) * 12
+          + Math.sin(worldX * 0.042 + worldZ * 0.038) * 5
+          + Math.cos(worldX * 0.085 + worldZ * 0.074) * 2;
+  const outerT = Math.max(0, Math.min(1, (dist - MAP_SIZE * 0.36) / (MAP_SIZE * 0.12)));
+  const outerBoost = outerT * outerT * 18;
+  return (h + outerBoost) * t;
+}
+
 function placeOnTerrain(x, z) {
-  // Get Y on terrain via raycasting down from above
-  const ray = new THREE.Raycaster(new THREE.Vector3(x, 90, z), new THREE.Vector3(0,-1,0));
-  const hits = ray.intersectObject(terrainMesh);
-  return hits.length ? hits[0].point.y : 0;
+  return getTerrainHeightMath(x, z);
 }
 
 // Shared materials — created once, reused across all buildings
@@ -2751,10 +2764,6 @@ function updatePlayer(dt) {
 }
 
 // Pre-allocated objects to avoid per-call GC pressure
-const _terrainRayOrigin = new THREE.Vector3();
-const _terrainRayDir    = new THREE.Vector3(0, -1, 0);
-const _terrainRaycaster = new THREE.Raycaster();
-_terrainRaycaster.far   = 160;
 // Pre-allocated for updatePlayer downward ground-collision ray (called every frame)
 const _downRay    = new THREE.Raycaster();
 const _downOrigin = new THREE.Vector3();
@@ -2775,10 +2784,7 @@ const _nextPos   = new THREE.Vector3();
 const _botFromPos = new THREE.Vector3();
 
 function getTerrainY(x, z) {
-  _terrainRayOrigin.set(x, 90, z);
-  _terrainRaycaster.set(_terrainRayOrigin, _terrainRayDir);
-  const hits = _terrainRaycaster.intersectObject(terrainMesh);
-  return hits.length ? hits[0].point.y : 0;
+  return getTerrainHeightMath(x, z);
 }
 
 function checkWallCollision(nx, nz) {
