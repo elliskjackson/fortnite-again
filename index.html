@@ -427,7 +427,6 @@ const skyMat = new THREE.ShaderMaterial({
 const sky = new THREE.Mesh(skyGeo, skyMat);
 scene.add(sky);
 scene.background = null;
-scene.fog = new THREE.FogExp2(0xc8e8ff, 0.0025);
 
 const camera = new THREE.PerspectiveCamera(75, 1, 0.1, 600);
 camera.position.set(0, PLAYER_HEIGHT, 0);
@@ -466,8 +465,8 @@ resize();
 const sun = new THREE.DirectionalLight(0xfff8e7, 1.4);
 sun.position.set(100, 200, 80);
 sun.castShadow = true;
-sun.shadow.mapSize.width  = 1024;
-sun.shadow.mapSize.height = 1024;
+sun.shadow.mapSize.width  = 2048;
+sun.shadow.mapSize.height = 2048;
 sun.shadow.camera.near = 0.5;
 sun.shadow.camera.far  = 600;
 sun.shadow.camera.left = sun.shadow.camera.bottom = -300;
@@ -477,6 +476,8 @@ scene.add(sun);
 
 const ambient = new THREE.HemisphereLight(0x87CEEB, 0x5c7a3a, 0.6);
 scene.add(ambient);
+// Atmospheric fog — gives depth to mountains, matches sky colour
+scene.fog = new THREE.FogExp2(0x8ab0c8, 0.0022);
 
 // ════════════════════════════════════════════════════════════════
 //  PROCEDURAL TEXTURES
@@ -513,72 +514,75 @@ const grassTex = makeCanvasTexture(512, (ctx, s) => {
 grassTex.repeat.set(40, 40);
 
 const concreteTex = makeCanvasTexture(512, (ctx, s) => {
-  ctx.fillStyle = '#888';
+  // Warm grey base with subtle gradient
+  const grad = ctx.createLinearGradient(0, 0, s, s);
+  grad.addColorStop(0, '#898070');
+  grad.addColorStop(1, '#7a7462');
+  ctx.fillStyle = grad;
   ctx.fillRect(0, 0, s, s);
-  // Panel grid
-  ctx.strokeStyle = 'rgba(0,0,0,0.25)';
-  ctx.lineWidth = 2;
-  for (let x = 0; x < s; x += 64) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,s); ctx.stroke(); }
-  for (let y = 0; y < s; y += 64) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(s,y); ctx.stroke(); }
-  // Subtle noise
-  for (let i = 0; i < 2000; i++) {
-    const x = Math.random()*s, y = Math.random()*s;
-    const v = Math.floor(120 + Math.random()*40);
-    ctx.fillStyle = `rgba(${v},${v},${v},0.08)`;
-    ctx.fillRect(x, y, 3, 3);
+  // Horizontal panel seams (brick-offset pattern)
+  const pH = 56, pW = 112;
+  ctx.strokeStyle = 'rgba(0,0,0,0.32)';
+  ctx.lineWidth = 2.5;
+  for (let row = 0; row * pH < s + pH; row++) {
+    const xOff = (row % 2) * pW / 2;
+    const y = row * pH;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(s, y); ctx.stroke();
+    for (let col = 0; col * pW < s + pW; col++) {
+      const x = col * pW - xOff;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + pH); ctx.stroke();
+    }
+  }
+  // Vertical weathering streaks
+  for (let i = 0; i < 10; i++) {
+    const sx = Math.random() * s;
+    const sh = 60 + Math.random() * 180;
+    const sy = Math.random() * (s - sh);
+    const sg = ctx.createLinearGradient(sx, sy, sx, sy + sh);
+    sg.addColorStop(0, 'rgba(40,30,20,0)');
+    sg.addColorStop(0.3, 'rgba(40,30,20,0.14)');
+    sg.addColorStop(1, 'rgba(40,30,20,0)');
+    ctx.fillStyle = sg;
+    ctx.fillRect(sx - 4, sy, 8, sh);
+  }
+  // Fine surface noise
+  for (let i = 0; i < 4000; i++) {
+    const x = Math.random() * s, y = Math.random() * s;
+    const v = 100 + Math.floor(Math.random() * 60);
+    ctx.fillStyle = `rgba(${v},${v},${v},0.07)`;
+    ctx.fillRect(x, y, 2, 2);
   }
 });
 concreteTex.repeat.set(3, 3);
 
 const barkTex = makeCanvasTexture(256, (ctx, s) => {
-  // Gradient base — slightly darker on edges to fake cylinder shading
-  const bg = ctx.createLinearGradient(0, 0, s, 0);
-  bg.addColorStop(0,   '#3a2015');
-  bg.addColorStop(0.25,'#6B3A2A');
-  bg.addColorStop(0.75,'#6B3A2A');
-  bg.addColorStop(1,   '#3a2015');
-  ctx.fillStyle = bg;
+  ctx.fillStyle = '#5c3420';
   ctx.fillRect(0, 0, s, s);
-  // Deep wavy vertical grooves
-  for (let i = 0; i < 14; i++) {
-    const bx = (i / 14) * s + (Math.random() - 0.5) * 12;
-    ctx.strokeStyle = `rgba(0,0,0,${0.25 + Math.random() * 0.2})`;
-    ctx.lineWidth = 1.5 + Math.random() * 2.5;
-    ctx.beginPath();
-    ctx.moveTo(bx, 0);
-    for (let yy = 0; yy <= s; yy += 18) {
-      ctx.lineTo(bx + (Math.random() - 0.5) * 10, yy);
-    }
+  // Vertical grain
+  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 48; i++) {
+    const x = Math.random() * s;
+    ctx.beginPath(); ctx.moveTo(x, 0);
+    let y = 0;
+    while (y < s) { ctx.lineTo(x + (Math.random() - 0.5) * 5, y); y += 6 + Math.random() * 10; }
     ctx.stroke();
   }
-  // Thin light highlight streaks
-  for (let i = 0; i < 25; i++) {
-    const bx = Math.random() * s;
-    ctx.fillStyle = `rgba(255,200,150,${0.05 + Math.random() * 0.09})`;
-    ctx.fillRect(bx, 0, 1 + Math.random() * 2, s);
-  }
-  // Horizontal ridges / growth rings
+  // Horizontal crack lines
+  ctx.strokeStyle = 'rgba(25,12,4,0.55)';
+  ctx.lineWidth = 1.5;
   for (let i = 0; i < 18; i++) {
-    const by = Math.random() * s;
-    ctx.strokeStyle = `rgba(0,0,0,${0.1 + Math.random() * 0.18})`;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, by);
-    for (let xx = 0; xx <= s; xx += 14) {
-      ctx.lineTo(xx, by + (Math.random() - 0.5) * 5);
-    }
+    const y = Math.random() * s;
+    ctx.beginPath(); ctx.moveTo(0, y);
+    let x = 0;
+    while (x < s) { ctx.lineTo(x, y + (Math.random() - 0.5) * 4); x += 8 + Math.random() * 18; }
     ctx.stroke();
   }
-  // Bark knots
-  for (let i = 0; i < 4; i++) {
-    const kx = Math.random() * s, ky = Math.random() * s;
-    for (let ring = 4; ring > 0; ring--) {
-      ctx.strokeStyle = `rgba(0,0,0,${0.07 * ring})`;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.ellipse(kx, ky, ring * 5, ring * 3, 0.3, 0, Math.PI * 2);
-      ctx.stroke();
-    }
+  // Lighter highlights
+  for (let i = 0; i < 600; i++) {
+    const x = Math.random() * s, y = Math.random() * s;
+    ctx.fillStyle = `rgba(160,95,55,${0.04 + Math.random() * 0.09})`;
+    ctx.fillRect(x, y, 1 + Math.random() * 3, 1);
   }
 });
 barkTex.repeat.set(1, 3);
@@ -616,13 +620,14 @@ leavesTex.repeat.set(2, 2);
 //  TERRAIN
 // ════════════════════════════════════════════════════════════════
 const terrainGeo  = new THREE.PlaneGeometry(MAP_SIZE, MAP_SIZE, 100, 100);
-const terrainMat  = new THREE.MeshStandardMaterial({ color: 0x7aaf6a, map: grassTex, roughness: 0.92, metalness: 0.0 });
+const terrainMat  = new THREE.MeshStandardMaterial({ color: 0xffffff, map: grassTex, roughness: 0.92, metalness: 0.0, vertexColors: true });
 const terrainMesh = new THREE.Mesh(terrainGeo, terrainMat);
 terrainMesh.rotation.x = -Math.PI / 2;
 terrainMesh.receiveShadow = true;
 
 // Displace vertices for hills and mountains (flat centre for spawn, big peaks at edges)
 const pos = terrainGeo.attributes.position;
+const vColors = new Float32Array(pos.count * 3);
 for (let i = 0; i < pos.count; i++) {
   const x = pos.getX(i), z = pos.getY(i);  // note: pre-rotation axes
   const dist = Math.sqrt(x*x + z*z);
@@ -640,9 +645,29 @@ for (let i = 0; i < pos.count; i++) {
     const outerT = Math.max(0, Math.min(1, (dist - MAP_SIZE * 0.36) / (MAP_SIZE * 0.12)));
     const outerBoost = outerT * outerT * 18;
     pos.setZ(i, (h + outerBoost) * t);
+    // Vertex colour: green lowlands → grey rock → white snow
+    const worldH = (h + outerBoost) * t;
+    const ci = i * 3;
+    if (worldH < 1.5) {
+      vColors[ci]=0.28; vColors[ci+1]=0.42; vColors[ci+2]=0.18; // grass green
+    } else if (worldH < 8) {
+      const blend = (worldH - 1.5) / 6.5;
+      vColors[ci]=0.28+blend*0.22; vColors[ci+1]=0.42-blend*0.12; vColors[ci+2]=0.18+blend*0.12; // green→earthy
+    } else if (worldH < 22) {
+      const blend = (worldH - 8) / 14;
+      vColors[ci]=0.50+blend*0.10; vColors[ci+1]=0.30-blend*0.05; vColors[ci+2]=0.30+blend*0.10; // earthy→grey rock
+    } else {
+      const blend = Math.min(1, (worldH - 22) / 12);
+      vColors[ci]=0.60+blend*0.35; vColors[ci+1]=0.35+blend*0.40; vColors[ci+2]=0.40+blend*0.45; // rock→snow
+    }
+  } else {
+    // Flat zone — grass green
+    const ci = i * 3;
+    vColors[ci]=0.28; vColors[ci+1]=0.42; vColors[ci+2]=0.18;
   }
 }
 terrainGeo.computeVertexNormals();
+terrainGeo.setAttribute('color', new THREE.BufferAttribute(vColors, 3));
 scene.add(terrainMesh);
 // Force matrix update so placeOnTerrain raycasts correctly before first render
 terrainMesh.updateMatrixWorld(true);
@@ -1411,16 +1436,16 @@ function addBuilding(x, z, seed) {
   const plinthH = 0.35;
   addTrim(w + wallThick*2, plinthH, wallThick + 0.05, x, groundY + plinthH/2, z - d/2);
   addTrim(w + wallThick*2, plinthH, wallThick + 0.05, x, groundY + plinthH/2, z + d/2);
-  addTrim(wallThick + 0.05, plinthH, d, x - w/2, groundY + plinthH/2, z);
-  addTrim(wallThick + 0.05, plinthH, d, x + w/2, groundY + plinthH/2, z);
+  addTrim(wallThick + 0.05, plinthH, d, x - w / 2, groundY + plinthH / 2 + 0.002, z);
+  addTrim(wallThick + 0.05, plinthH, d, x + w / 2, groundY + plinthH / 2 + 0.002, z);
 
   // Horizontal trim: cornice just below roof (all 4 sides)
   const corniceH = 0.28;
   const corniceY = wallTopY - corniceH/2;
   addTrim(w + wallThick*2 + 0.1, corniceH, wallThick + 0.15, x, corniceY, z - d/2);
   addTrim(w + wallThick*2 + 0.1, corniceH, wallThick + 0.15, x, corniceY, z + d/2);
-  addTrim(wallThick + 0.15, corniceH, d + 0.1, x - w/2, corniceY, z);
-  addTrim(wallThick + 0.15, corniceH, d + 0.1, x + w/2, corniceY, z);
+  addTrim(wallThick + 0.15, corniceH, d + 0.1, x - w / 2, corniceY + 0.002, z);
+  addTrim(wallThick + 0.15, corniceH, d + 0.1, x + w / 2, corniceY + 0.002, z);
 
   // Door frame trim (sides + lintel)
   const dfX = x, dfZ = frontZ;
@@ -1435,26 +1460,27 @@ function addBuilding(x, z, seed) {
   const winW = Math.min(1.2, d * 0.22);
   const winH = Math.min(1.4, h * 0.28);
   const winY  = groundY + h * 0.58;
-  const winFO = 0.06; // how far glass protrudes inward from wall face
   const winFrameThick = 0.07;
   [-1, 1].forEach(wallSide => {
-    const wallFaceX = x + wallSide * (w/2);
+    // wallExtX = exterior face of this side wall (not its centre)
+    const wallExtX = x + wallSide * (w / 2 + wallThick / 2);
     [-1, 1].forEach(winPos => {
       const winZ = z + winPos * d * 0.28;
-      // Glass pane
-      const glass = new THREE.Mesh(new THREE.BoxGeometry(0.04, winH - winFrameThick*2, winW - winFrameThick*2), glassMat);
-      glass.position.set(wallFaceX + wallSide * winFO, winY, winZ);
+      // Glass pane — 2 cm behind exterior face, visible from outside
+      const glass = new THREE.Mesh(new THREE.BoxGeometry(0.04, winH - winFrameThick * 2, winW - winFrameThick * 2), glassMat);
+      glass.position.set(wallExtX - wallSide * 0.02, winY, winZ);
       scene.add(glass);
-      // Frame: top, bottom, left, right strips
-      const fw = winW + 0.04, fh = 0.07;
-      const fFrame = new THREE.Mesh(new THREE.BoxGeometry(0.06, fh, fw), frameMat);
-      fFrame.position.set(wallFaceX, winY + winH/2, winZ); scene.add(fFrame);
-      const bFrame = new THREE.Mesh(new THREE.BoxGeometry(0.06, fh, fw), frameMat);
-      bFrame.position.set(wallFaceX, winY - winH/2, winZ); scene.add(bFrame);
-      const lFrame = new THREE.Mesh(new THREE.BoxGeometry(0.06, winH + fh, fh), frameMat);
-      lFrame.position.set(wallFaceX, winY, winZ - winW/2); scene.add(lFrame);
-      const rFrame = new THREE.Mesh(new THREE.BoxGeometry(0.06, winH + fh, fh), frameMat);
-      rFrame.position.set(wallFaceX, winY, winZ + winW/2); scene.add(rFrame);
+      // Frame strips — protrude 0.07 outward from wall face
+      const faceX = wallExtX + wallSide * 0.035; // centre of frame depth
+      const fw = winW + 0.06, fh = 0.08;
+      const fFrame = new THREE.Mesh(new THREE.BoxGeometry(0.08, fh, fw), frameMat);
+      fFrame.position.set(faceX, winY + winH / 2, winZ); scene.add(fFrame);
+      const bFrame = new THREE.Mesh(new THREE.BoxGeometry(0.08, fh, fw), frameMat);
+      bFrame.position.set(faceX, winY - winH / 2, winZ); scene.add(bFrame);
+      const lFrame = new THREE.Mesh(new THREE.BoxGeometry(0.08, winH + fh, fh), frameMat);
+      lFrame.position.set(faceX, winY, winZ - winW / 2); scene.add(lFrame);
+      const rFrame = new THREE.Mesh(new THREE.BoxGeometry(0.08, winH + fh, fh), frameMat);
+      rFrame.position.set(faceX, winY, winZ + winW / 2); scene.add(rFrame);
     });
   });
 
@@ -1469,11 +1495,11 @@ function addBuilding(x, z, seed) {
 
   // Roof parapet — 4 low walls around the perimeter
   const parH = 0.65, parT = 0.22;
-  const parY = wallTopY + 1.0 + parH/2; // on top of roof slab
-  addTrim(w + 0.5, parH, parT, x, parY, z - (d + 0.5)/2); // front parapet
-  addTrim(w + 0.5, parH, parT, x, parY, z + (d + 0.5)/2); // back parapet
-  addTrim(parT, parH, d + 0.5, x - (w + 0.5)/2, parY, z); // left parapet
-  addTrim(parT, parH, d + 0.5, x + (w + 0.5)/2, parY, z); // right parapet
+  const parY = wallTopY + 1.0 + parH / 2 + 0.001; // +0.001 above roof to avoid z-fighting
+  addTrim(w + 0.5, parH, parT, x, parY, z - (d + 0.5) / 2);          // front parapet
+  addTrim(w + 0.5, parH, parT, x, parY, z + (d + 0.5) / 2);          // back parapet
+  addTrim(parT, parH, d + 0.5 - parT, x - (w + 0.5) / 2, parY + 0.001, z); // left parapet (shorter to avoid corner overlap)
+  addTrim(parT, parH, d + 0.5 - parT, x + (w + 0.5) / 2, parY + 0.001, z); // right parapet
 
   // Interior chest — placed against back wall, centered
   const chestGroup = new THREE.Group();
