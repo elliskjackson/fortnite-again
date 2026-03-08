@@ -1443,6 +1443,43 @@ function addBuilding(x, z, seed) {
   // Floor (slightly above terrain, inset from walls)
   addPanel(new THREE.BoxGeometry(w - 0.6, 0.2, d - 0.6), x, groundY + 0.1, z, true);
 
+  // Foundation curtains — custom geometry that seals the gap between groundY
+  // and the terrain profile along each wall base, so buildings on slopes look
+  // grounded rather than floating.
+  const foundationMat = new THREE.MeshStandardMaterial({
+    color: new THREE.Color().setHSL(hue, 0.10, Math.max(0.1, lightness - 0.10)),
+    map: concreteTex, roughness: 0.90, metalness: 0.04, side: THREE.DoubleSide
+  });
+  function addFoundationCurtain(x0, z0, x1, z1) {
+    const len = Math.sqrt((x1 - x0) ** 2 + (z1 - z0) ** 2);
+    const segs = Math.max(4, Math.ceil(len * 1.8));
+    const positions = [];
+    for (let i = 0; i <= segs; i++) {
+      const t = i / segs;
+      const px = x0 + t * (x1 - x0);
+      const pz = z0 + t * (z1 - z0);
+      const by = getTerrainHeightMath(px, pz) - 0.35; // go slightly below terrain
+      positions.push(px, groundY, pz);  // top (wall base)
+      positions.push(px, by,     pz);  // bottom (terrain-hugging)
+    }
+    const indices = [];
+    for (let i = 0; i < segs; i++) {
+      const tl = i * 2, bl = i * 2 + 1, tr = (i + 1) * 2, br = (i + 1) * 2 + 1;
+      indices.push(tl, tr, bl,  tr, br, bl);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+    const m = new THREE.Mesh(geo, foundationMat);
+    m.receiveShadow = true;
+    scene.add(m);
+  }
+  addFoundationCurtain(x - w / 2, backZ,  x + w / 2, backZ);  // back wall
+  addFoundationCurtain(x - w / 2, frontZ, x + w / 2, frontZ); // front wall
+  addFoundationCurtain(x - w / 2, frontZ, x - w / 2, backZ);  // left wall
+  addFoundationCurtain(x + w / 2, frontZ, x + w / 2, backZ);  // right wall
+
   // ── Architectural details ──────────────────────────────────────
 
   // Horizontal trim: base plinth (all 4 sides)
