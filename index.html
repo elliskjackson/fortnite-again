@@ -2503,6 +2503,8 @@ function startGame(endless) {
 
   spawnBots();
   initStorm();
+  // Pre-compile all shaders so first-render stutter doesn't happen mid-game
+  renderer.compile(scene, camera);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -2938,13 +2940,8 @@ function updateBots(dt) {
       });
     }
 
-    // Cache terrain Y — only re-raycast when bot moves >0.5 units (saves ~90 raycasts/frame)
-    const moveDist = (bot.x - (bot._cachedTX ?? bot.x + 99)) ** 2 + (bot.z - (bot._cachedTZ ?? bot.z + 99)) ** 2;
-    if (moveDist > 0.25) {
-      bot._cachedTX = bot.x; bot._cachedTZ = bot.z;
-      bot._cachedTY = getTerrainY(bot.x, bot.z);
-    }
-    bot.y = bot._cachedTY ?? 0;
+    // getTerrainHeightMath is O(1) — update every frame so bots track slopes smoothly
+    bot.y = getTerrainHeightMath(bot.x, bot.z);
 
     // Walk cycle speed
     const isMoving = bot.state === 'chase' || bot.state === 'flee' || bot.state === 'patrol' || bot.state === 'attack';
