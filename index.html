@@ -398,11 +398,12 @@ renderer.outputEncoding = THREE.sRGBEncoding;
 
 const scene  = new THREE.Scene();
 // ── Sky — dramatic golden-hour gradient with sun disk ─────────────
-const skyGeo = new THREE.SphereGeometry(800, 32, 16);
+const skyGeo = new THREE.SphereGeometry(490, 32, 16);
 const _sunDirUniform = new THREE.Vector3(0.68, 0.22, 0.70).normalize();
 const skyMat = new THREE.ShaderMaterial({
   side: THREE.BackSide,
   depthWrite: false,
+  depthTest: false,
   uniforms: {
     sunDir:     { value: _sunDirUniform },
     topColor:   { value: new THREE.Color(0x08143a) },
@@ -442,6 +443,7 @@ const skyMat = new THREE.ShaderMaterial({
     }`
 });
 const sky = new THREE.Mesh(skyGeo, skyMat);
+sky.renderOrder = -1;   // render before everything else
 scene.add(sky);
 scene.background = null;
 
@@ -2846,6 +2848,7 @@ function loop(t) {
     }
     updateWorldWeapons(dt);
   }
+  sky.position.copy(camera.position); // keep sky centred on camera
   composer.render();
 }
 requestAnimationFrame(loop);
