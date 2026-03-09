@@ -1318,11 +1318,15 @@ function getTerrainHeightMath(worldX, worldZ) {
   const flatZone = 55;
   if (dist <= flatZone) return 0;
   const t = Math.max(0, Math.min(1, (dist - flatZone) / (MAP_SIZE * 0.30)));
+  // The terrain vertex loop reads z = pos.getY(i) = local mesh Y.
+  // After rotation.x = -PI/2: world_Z = -local_Y, so local_Y = -worldZ.
+  // The formula was written using local_Y as "z", so we must pass -worldZ here.
+  const vz = -worldZ;
   const h = Math.sin(worldX * 0.022) * 7
-          + Math.cos(worldZ * 0.018) * 6
-          + Math.sin(worldX * 0.009 + worldZ * 0.007) * 12
-          + Math.sin(worldX * 0.042 + worldZ * 0.038) * 5
-          + Math.cos(worldX * 0.085 + worldZ * 0.074) * 2;
+          + Math.cos(vz * 0.018) * 6
+          + Math.sin(worldX * 0.009 + vz * 0.007) * 12
+          + Math.sin(worldX * 0.042 + vz * 0.038) * 5
+          + Math.cos(worldX * 0.085 + vz * 0.074) * 2;
   const outerT = Math.max(0, Math.min(1, (dist - MAP_SIZE * 0.36) / (MAP_SIZE * 0.12)));
   const outerBoost = outerT * outerT * 18;
   return (h + outerBoost) * t;
@@ -1676,8 +1680,13 @@ function addRock(x, z, seed) {
     for (let j = 0; j < count; j++) {
       const bx = cx + (rng(seed++) - 0.5) * 30;
       const bz = cz + (rng(seed++) - 0.5) * 30;
-      if (Math.abs(bx) < MAP_SIZE/2 - 10 && Math.abs(bz) < MAP_SIZE/2 - 10)
-        addBuilding(bx, bz, seed++);
+      if (Math.abs(bx) < MAP_SIZE/2 - 10 && Math.abs(bz) < MAP_SIZE/2 - 10) {
+        const bSeed = seed++;
+        const overlaps = buildingFootprints.some(f =>
+          Math.abs(bx - f.x) < f.hw + 8 && Math.abs(bz - f.z) < f.hd + 8
+        );
+        if (!overlaps) addBuilding(bx, bz, bSeed);
+      }
     }
   }
 
