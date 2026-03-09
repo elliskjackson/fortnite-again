@@ -198,6 +198,7 @@
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/RenderPass.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/ShaderPass.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/shaders/FXAAShader.js"></script>
 <script>
 'use strict';
 
@@ -396,32 +397,48 @@ renderer.toneMappingExposure = 1.1;
 renderer.outputEncoding = THREE.sRGBEncoding;
 
 const scene  = new THREE.Scene();
-// Gradient sky sphere
-const skyGeo = new THREE.SphereGeometry(500, 32, 15);
+// ── Sky — dramatic golden-hour gradient with sun disk ─────────────
+const skyGeo = new THREE.SphereGeometry(800, 32, 16);
+const _sunDirUniform = new THREE.Vector3(0.68, 0.22, 0.70).normalize();
 const skyMat = new THREE.ShaderMaterial({
   side: THREE.BackSide,
+  depthWrite: false,
   uniforms: {
-    topColor:    { value: new THREE.Color(0x0077ff) },
-    bottomColor: { value: new THREE.Color(0xc8e8ff) },
-    offset:      { value: 30 },
-    exponent:    { value: 0.6 }
+    sunDir:     { value: _sunDirUniform },
+    topColor:   { value: new THREE.Color(0x08143a) },
+    midColor:   { value: new THREE.Color(0x1a5aaa) },
+    horizColor: { value: new THREE.Color(0xd4742a) },
+    groundColor:{ value: new THREE.Color(0x7a4820) },
   },
   vertexShader: `
-    varying vec3 vWorldPosition;
+    varying vec3 vWorldDir;
     void main() {
-      vec4 worldPosition = modelMatrix * vec4(position, 1.0);
-      vWorldPosition = worldPosition.xyz;
+      vWorldDir = normalize((modelMatrix * vec4(position, 0.0)).xyz);
       gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
     }`,
   fragmentShader: `
+    uniform vec3 sunDir;
     uniform vec3 topColor;
-    uniform vec3 bottomColor;
-    uniform float offset;
-    uniform float exponent;
-    varying vec3 vWorldPosition;
+    uniform vec3 midColor;
+    uniform vec3 horizColor;
+    uniform vec3 groundColor;
+    varying vec3 vWorldDir;
     void main() {
-      float h = normalize(vWorldPosition + offset).y;
-      gl_FragColor = vec4(mix(bottomColor, topColor, max(pow(max(h, 0.0), exponent), 0.0)), 1.0);
+      float h = normalize(vWorldDir).y;                     // -1..1
+      // Sky gradient: ground → horizon → mid → top
+      vec3 sky = mix(groundColor, horizColor, smoothstep(-0.08, 0.06, h));
+      sky = mix(sky, midColor,    smoothstep(0.04, 0.30, h));
+      sky = mix(sky, topColor,    smoothstep(0.25, 0.90, h));
+      // Sun corona glow
+      float sunDot   = clamp(dot(normalize(vWorldDir), sunDir), 0.0, 1.0);
+      float corona   = pow(sunDot, 80.0) * 1.2;
+      float halo     = pow(sunDot, 8.0)  * 0.18;
+      sky += vec3(1.00, 0.72, 0.35) * corona;
+      sky += vec3(1.00, 0.60, 0.20) * halo;
+      // Sun disk (sharp white core)
+      float disk = step(0.9992, sunDot);
+      sky = mix(sky, vec3(1.0, 0.97, 0.88), disk);
+      gl_FragColor = vec4(sky, 1.0);
     }`
 });
 const sky = new THREE.Mesh(skyGeo, skyMat);
@@ -440,12 +457,50 @@ composer.addPass(renderPass);
 
 const bloomPass = new THREE.UnrealBloomPass(
   new THREE.Vector2(window.innerWidth, window.innerHeight),
-  0.55,   // strength  — lower = subtler
-  0.35,   // radius
-  0.82    // threshold — only pixels brighter than this glow
+  0.70,   // strength
+  0.45,   // radius  — slightly wider bloom
+  0.75    // threshold — catch more of the lit scene
 );
 composer.addPass(bloomPass);
 bloomPass.strength = settings.bloom;
+
+// Colour grade + vignette pass
+const _cgPass = new THREE.ShaderPass({
+  uniforms: {
+    tDiffuse:  { value: null },
+    sat:       { value: 1.18 },
+    contrast:  { value: 1.06 },
+    brightness:{ value: 0.015 },
+    vigStr:    { value: 0.38 },
+    vigR:      { value: 0.72 },
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float sat, contrast, brightness, vigStr, vigR;
+    varying vec2 vUv;
+    void main(){
+      vec4 t  = texture2D(tDiffuse, vUv);
+      vec3 c  = t.rgb;
+      c = (c - 0.5) * contrast + 0.5 + brightness;
+      float lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
+      c = mix(vec3(lum), c, sat);
+      float v = smoothstep(vigR, vigR - 0.28, length(vUv - 0.5));
+      c *= mix(1.0 - vigStr, 1.0, v);
+      gl_FragColor = vec4(clamp(c, 0.0, 1.0), t.a);
+    }`
+});
+composer.addPass(_cgPass);
+
+// FXAA — must be last pass so it anti-aliases the final composited image
+const _fxaaPass = new THREE.ShaderPass(THREE.FXAAShader);
+_fxaaPass.uniforms['resolution'].value.set(
+  1 / (window.innerWidth  * Math.min(window.devicePixelRatio, 1.5)),
+  1 / (window.innerHeight * Math.min(window.devicePixelRatio, 1.5))
+);
+composer.addPass(_fxaaPass);
 
 function resize() {
   const W = window.innerWidth, H = window.innerHeight;
@@ -455,6 +510,10 @@ function resize() {
   hud.height = H;
   camera.aspect = W / H;
   camera.updateProjectionMatrix();
+  _fxaaPass.uniforms['resolution'].value.set(
+    1 / (window.innerWidth  * Math.min(window.devicePixelRatio, 1.5)),
+    1 / (window.innerHeight * Math.min(window.devicePixelRatio, 1.5))
+  );
 }
 window.addEventListener('resize', resize);
 resize();
@@ -462,8 +521,8 @@ resize();
 // ════════════════════════════════════════════════════════════════
 //  LIGHTING
 // ════════════════════════════════════════════════════════════════
-const sun = new THREE.DirectionalLight(0xfff8e7, 1.4);
-sun.position.set(100, 200, 80);
+const sun = new THREE.DirectionalLight(0xffe8a0, 1.6);
+sun.position.set(170, 55, 175);   // low angle — golden hour
 sun.castShadow = true;
 sun.shadow.mapSize.width  = 2048;
 sun.shadow.mapSize.height = 2048;
@@ -473,11 +532,15 @@ sun.shadow.camera.left = sun.shadow.camera.bottom = -300;
 sun.shadow.camera.right = sun.shadow.camera.top = 300;
 sun.shadow.bias = -0.001;
 scene.add(sun);
+// Cool fill light from the opposite side — adds colour contrast and depth
+const fillLight = new THREE.DirectionalLight(0x3a6aaa, 0.45);
+fillLight.position.set(-150, 80, -120);
+scene.add(fillLight);
 
-const ambient = new THREE.HemisphereLight(0x87CEEB, 0x5c7a3a, 0.6);
+const ambient = new THREE.HemisphereLight(0x4a88cc, 0x7a5530, 0.75);
 scene.add(ambient);
 // Atmospheric fog — gives depth to mountains, matches sky colour
-scene.fog = new THREE.FogExp2(0x8ab0c8, 0.0022);
+scene.fog = new THREE.FogExp2(0xb07040, 0.0018);
 
 // ════════════════════════════════════════════════════════════════
 //  PROCEDURAL TEXTURES
@@ -1651,18 +1714,36 @@ function addTree(x, z, seed) {
 }
 
 function addRock(x, z, seed) {
-  const s = 0.5 + seededRand(seed) * 2;
-  const geo = new THREE.IcosahedronGeometry(s, 0);
-  const mat = new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.85, metalness: 0.1 });
+  const s = 0.7 + seededRand(seed) * 2.2;
+  // Detail level 1 = smoother icosahedron, more believable as a rock
+  const geo = new THREE.IcosahedronGeometry(s, 1);
+  // Slightly flatten and skew for natural look
+  const posAttr = geo.attributes.position;
+  for (let i = 0; i < posAttr.count; i++) {
+    posAttr.setY(i, posAttr.getY(i) * (0.55 + seededRand(seed + 10 + i * 0.1) * 0.35));
+    posAttr.setX(i, posAttr.getX(i) * (0.85 + seededRand(seed + 20 + i * 0.1) * 0.30));
+    posAttr.setZ(i, posAttr.getZ(i) * (0.85 + seededRand(seed + 30 + i * 0.1) * 0.30));
+  }
+  posAttr.needsUpdate = true;
+  geo.computeVertexNormals();
+  // Vary rock colour: grey, brownish, reddish, dark
+  const hue  = [0.06, 0.08, 0.60, 0.0][Math.floor(seededRand(seed+5) * 4)];
+  const sat  = 0.04 + seededRand(seed+6) * 0.10;
+  const lit  = 0.28 + seededRand(seed+7) * 0.22;
+  const mat  = new THREE.MeshStandardMaterial({
+    color: new THREE.Color().setHSL(hue, sat, lit),
+    roughness: 0.88,
+    metalness: 0.08,
+  });
   const mesh = new THREE.Mesh(geo, mat);
   const y = placeOnTerrain(x, z);
-  mesh.position.set(x, y + s * 0.6, z);
+  mesh.position.set(x, y + s * 0.28, z);   // embed rocks deeper into ground
   mesh.rotation.set(seededRand(seed+1)*2, seededRand(seed+2)*6, seededRand(seed+3)*2);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   scene.add(mesh);
   environmentMeshes.push(mesh);
-  envObjects.push({ x, z, w: s + 0.3, d: s + 0.3, maxY: y + s * 1.6 });
+  envObjects.push({ x, z, w: s + 0.3, d: s + 0.3, maxY: y + s * 1.4 });
 }
 
 // Procedurally place environment
