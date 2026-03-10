@@ -390,8 +390,7 @@ const hctx    = hud.getContext('2d');
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.0));
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.shadowMap.enabled = false;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.1;
 renderer.outputEncoding = THREE.sRGBEncoding;
@@ -2721,6 +2720,7 @@ function spawnBots() {
       walkPhase: rng(i*4+3) * Math.PI * 2,
       strafeDir: (rng(i*4+3) > 0.5 ? 1 : -1),
       strafeTimer: 0,
+      aiTimer: Math.random() * 0.1,  // stagger so all bots don't update same frame
     };
     bots.push(bot);
     buildBotGun(bot);
@@ -2940,7 +2940,12 @@ function updateBots(dt) {
       continue;
     }
 
-    runBotAI(bot, dt, distToPlayer);
+    // AI decision runs at 10fps to avoid O(n²) LOS cost every frame
+    bot.aiTimer -= dt;
+    if (bot.aiTimer <= 0) {
+      runBotAI(bot, dt, distToPlayer);
+      bot.aiTimer = 0.1;
+    }
     runBotMovement(bot, dt);
     runBotShooting(bot, dt, distToPlayer);
 
