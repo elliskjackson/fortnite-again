@@ -1570,11 +1570,16 @@ function addBuilding(x, z, seed) {
 
   // Roof parapet — 4 low walls around the perimeter
   const parH = 0.65, parT = 0.22;
-  const parY = wallTopY + 1.0 + parH / 2 + 0.001; // +0.001 above roof to avoid z-fighting
-  addTrim(w + 0.5, parH, parT, x, parY, z - (d + 0.5) / 2);          // front parapet
-  addTrim(w + 0.5, parH, parT, x, parY, z + (d + 0.5) / 2);          // back parapet
-  addTrim(parT, parH, d + 0.5 - parT, x - (w + 0.5) / 2, parY + 0.001, z); // left parapet (shorter to avoid corner overlap)
-  addTrim(parT, parH, d + 0.5 - parT, x + (w + 0.5) / 2, parY + 0.001, z); // right parapet
+  const parY = wallTopY + 1.0 + parH / 2 + 0.001;
+  [[w + 0.5, parH, parT, x, parY, z - (d + 0.5) / 2],
+   [w + 0.5, parH, parT, x, parY, z + (d + 0.5) / 2],
+   [parT, parH, d + 0.5 - parT, x - (w + 0.5) / 2, parY + 0.001, z],
+   [parT, parH, d + 0.5 - parT, x + (w + 0.5) / 2, parY + 0.001, z],
+  ].forEach(([pw, ph, pd, px, py, pz]) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(pw, ph, pd), trimMat);
+    m.position.set(px, py, pz);
+    scene.add(m);
+  });
 
   // Interior chest — placed against back wall, centered
   const chestGroup = new THREE.Group();
