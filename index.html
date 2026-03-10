@@ -1639,10 +1639,12 @@ function addTree(x, z, seed) {
 
   const baseR = 1.4 + seededRand(seed + 1) * 1.2;
 
-  // 2-tier stacked pine canopy
+  // 4-tier stacked pine canopy
   const tiers = [
     { r: baseR,         th: h * 0.72, yOff: h * 0.50, mat: innerMat  },
+    { r: baseR * 0.75,  th: h * 0.60, yOff: h * 0.88, mat: leavesMat },
     { r: baseR * 0.46,  th: h * 0.48, yOff: h * 1.20, mat: leavesMat },
+    { r: baseR * 0.24,  th: h * 0.34, yOff: h * 1.46, mat: leavesMat },
   ];
   tiers.forEach(({ r, th, yOff, mat }, i) => {
     const geo = new THREE.ConeGeometry(r, th, 7 + (i % 2));
@@ -2748,6 +2750,7 @@ function initStorm() {
 //  RENDER LOOP (placeholder — populated after map/bots added)
 // ════════════════════════════════════════════════════════════════
 let lastTime = 0;
+let _hudTimer = 0;
 function loop(t) {
   requestAnimationFrame(loop);
   if (lastTime === 0) { lastTime = t; return; }
@@ -2757,7 +2760,8 @@ function loop(t) {
     updatePlayer(dt);
     updateBots(dt);
     updateStorm(dt);
-    updateHUD();
+    _hudTimer -= dt;
+    if (_hudTimer <= 0) { updateHUD(); _hudTimer = 0.067; } // 15fps — canvas redraw is expensive
     updateImpacts(dt);
     updateTracers(dt);
     updateClouds(dt);
@@ -2978,13 +2982,18 @@ function updateBots(dt) {
     // getTerrainHeightMath is O(1) — update every frame so bots track slopes smoothly
     bot.y = getTerrainHeightMath(bot.x, bot.z);
 
+    bot.mesh.position.set(bot.x, bot.y, bot.z);
+    bot.mesh.rotation.y = bot.yaw;
+
+    // Skip limb animation for bots beyond 60 units — not visible at that distance
+    if (distSq > 60 * 60) continue;
+
     // Walk cycle speed
     const isMoving = bot.state === 'chase' || bot.state === 'flee' || bot.state === 'patrol' || bot.state === 'attack';
     bot.walkPhase += dt * (isMoving ? 4.5 : 1.5);
 
     const p = bot.parts;
 
-    bot.mesh.position.set(bot.x, bot.y, bot.z);
     if (bot.state === 'attack') {
       // Stand upright, arms raised to aim, legs strafe-walking
       p.leftArmPivot.rotation.x  = -0.9;
@@ -3007,8 +3016,6 @@ function updateBots(dt) {
     const relAngle = ((angleToPlayer - bot.yaw + Math.PI) % TWO_PI + TWO_PI) % TWO_PI - Math.PI;
     const targetHeadY = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, relAngle));
     p.headPivot.rotation.y += (targetHeadY - p.headPivot.rotation.y) * Math.min(1, dt * 5);
-
-    bot.mesh.rotation.y = bot.yaw;
   }
   state.botsAlive = alive;
 }
