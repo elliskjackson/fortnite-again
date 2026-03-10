@@ -464,7 +464,7 @@ const bloomPass = new THREE.UnrealBloomPass(
   0.75    // threshold — catch more of the lit scene
 );
 composer.addPass(bloomPass);
-bloomPass.strength = settings.bloom;
+bloomPass.enabled = false; // perf: bloom costs 3 extra render passes on integrated GPU
 
 // Colour grade + vignette pass
 const _cgPass = new THREE.ShaderPass({
@@ -1453,7 +1453,7 @@ function addBuilding(x, z, seed) {
   function addPanel(geo, px, py, pz, isInterior) {
     const m = new THREE.Mesh(geo, wallMat(isInterior));
     m.position.set(px, py, pz);
-    m.castShadow = true;
+    m.castShadow = false;
     m.receiveShadow = true;
     scene.add(m);
     if (!isInterior) environmentMeshes.push(m); // exterior walls are bullet targets
@@ -1469,12 +1469,6 @@ function addBuilding(x, z, seed) {
   const trimMat = new THREE.MeshStandardMaterial({ color: trimColor, roughness: 0.75, metalness: 0.10 });
   const glassMat = _buildingGlassMat;
   const frameMat = _buildingFrameMat;
-
-  function addTrim(w2, h2, d2, px, py, pz) {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w2, h2, d2), trimMat);
-    m.position.set(px, py, pz);
-    scene.add(m);
-  }
 
   // Left wall
   addPanel(new THREE.BoxGeometry(wallThick, h, d), x - w/2, midY, z, false);
@@ -1549,32 +1543,6 @@ function addBuilding(x, z, seed) {
   addFoundationCurtain(x - w / 2, frontZ, x - w / 2, backZ);  // left wall
   addFoundationCurtain(x + w / 2, frontZ, x + w / 2, backZ);  // right wall
 
-  // ── Architectural details ──────────────────────────────────────
-
-  // Horizontal trim: base plinth (all 4 sides)
-  const plinthH = 0.35;
-  addTrim(w + wallThick*2, plinthH, wallThick + 0.05, x, groundY + plinthH/2, z - d/2);
-  addTrim(w + wallThick*2, plinthH, wallThick + 0.05, x, groundY + plinthH/2, z + d/2);
-  addTrim(wallThick + 0.05, plinthH, d, x - w / 2, groundY + plinthH / 2 + 0.002, z);
-  addTrim(wallThick + 0.05, plinthH, d, x + w / 2, groundY + plinthH / 2 + 0.002, z);
-
-  // Horizontal trim: cornice just below roof (all 4 sides)
-  const corniceH = 0.28;
-  const corniceY = wallTopY - corniceH/2;
-  addTrim(w + wallThick*2 + 0.1, corniceH, wallThick + 0.15, x, corniceY, z - d/2);
-  addTrim(w + wallThick*2 + 0.1, corniceH, wallThick + 0.15, x, corniceY, z + d/2);
-  addTrim(wallThick + 0.15, corniceH, d + 0.1, x - w / 2, corniceY + 0.002, z);
-  addTrim(wallThick + 0.15, corniceH, d + 0.1, x + w / 2, corniceY + 0.002, z);
-
-  // Door frame trim (sides + lintel)
-  const dfX = x, dfZ = frontZ;
-  const dfSide = doorSideW > 0.3 ? 0.18 : 0;
-  if (dfSide > 0) {
-    addTrim(dfSide, doorH + 0.12, 0.12, dfX - doorW/2 - dfSide/2, groundY + doorH/2, dfZ);
-    addTrim(dfSide, doorH + 0.12, 0.12, dfX + doorW/2 + dfSide/2, groundY + doorH/2, dfZ);
-    addTrim(doorW + dfSide*2 + 0.04, 0.16, 0.12, dfX, groundY + doorH + 0.08, dfZ);
-  }
-
   // Windows on side walls (left + right), 2 per wall
   const winW = Math.min(1.2, d * 0.22);
   const winH = Math.min(1.4, h * 0.28);
@@ -1586,20 +1554,9 @@ function addBuilding(x, z, seed) {
     [-1, 1].forEach(winPos => {
       const winZ = z + winPos * d * 0.28;
       // Glass pane — 2 cm behind exterior face, visible from outside
-      const glass = new THREE.Mesh(new THREE.BoxGeometry(0.04, winH - winFrameThick * 2, winW - winFrameThick * 2), glassMat);
+      const glass = new THREE.Mesh(new THREE.BoxGeometry(0.04, winH, winW), glassMat);
       glass.position.set(wallExtX - wallSide * 0.02, winY, winZ);
       scene.add(glass);
-      // Frame strips — protrude 0.07 outward from wall face
-      const faceX = wallExtX + wallSide * 0.035; // centre of frame depth
-      const fw = winW + 0.06, fh = 0.08;
-      const fFrame = new THREE.Mesh(new THREE.BoxGeometry(0.08, fh, fw), frameMat);
-      fFrame.position.set(faceX, winY + winH / 2, winZ); scene.add(fFrame);
-      const bFrame = new THREE.Mesh(new THREE.BoxGeometry(0.08, fh, fw), frameMat);
-      bFrame.position.set(faceX, winY - winH / 2, winZ); scene.add(bFrame);
-      const lFrame = new THREE.Mesh(new THREE.BoxGeometry(0.08, winH + fh, fh), frameMat);
-      lFrame.position.set(faceX, winY, winZ - winW / 2); scene.add(lFrame);
-      const rFrame = new THREE.Mesh(new THREE.BoxGeometry(0.08, winH + fh, fh), frameMat);
-      rFrame.position.set(faceX, winY, winZ + winW / 2); scene.add(rFrame);
     });
   });
 
@@ -1666,23 +1623,6 @@ function addTree(x, z, seed) {
   scene.add(trunk);
   environmentMeshes.push(trunk);
 
-  // Root ridges — 4 tapered fins radiating from the base
-  const rootMat = new THREE.MeshStandardMaterial({ color: 0x5a3020, map: barkTex, roughness: 0.97, metalness: 0.0 });
-  for (let ri = 0; ri < 4; ri++) {
-    const angle = (ri / 4) * Math.PI * 2 + seededRand(seed + 20 + ri) * 0.5;
-    const rLen  = 0.9 + seededRand(seed + 24 + ri) * 0.5;
-    const rootGeo = new THREE.CylinderGeometry(0.04, 0.18, rLen, 5);
-    const root = new THREE.Mesh(rootGeo, rootMat);
-    root.position.set(
-      x + Math.sin(angle) * rLen * 0.45,
-      y + rLen * 0.15,
-      z + Math.cos(angle) * rLen * 0.45
-    );
-    root.rotation.z = Math.sin(angle) * 0.55;
-    root.rotation.x = -Math.cos(angle) * 0.55;
-    scene.add(root);
-  }
-
   // Per-tree foliage color — subtle hue/lightness shift (yellow-green to blue-green)
   const leafHue = 0.28 + seededRand(seed + 7) * 0.08;
   const leafLit = 0.19 + seededRand(seed + 8) * 0.12;
@@ -1695,12 +1635,10 @@ function addTree(x, z, seed) {
 
   const baseR = 1.4 + seededRand(seed + 1) * 1.2;
 
-  // 4-tier stacked pine canopy — extra tier at top
+  // 2-tier stacked pine canopy
   const tiers = [
     { r: baseR,         th: h * 0.72, yOff: h * 0.50, mat: innerMat  },
-    { r: baseR * 0.75,  th: h * 0.60, yOff: h * 0.88, mat: leavesMat },
     { r: baseR * 0.46,  th: h * 0.48, yOff: h * 1.20, mat: leavesMat },
-    { r: baseR * 0.24,  th: h * 0.34, yOff: h * 1.46, mat: leavesMat },
   ];
   tiers.forEach(({ r, th, yOff, mat }, i) => {
     const geo = new THREE.ConeGeometry(r, th, 7 + (i % 2));
